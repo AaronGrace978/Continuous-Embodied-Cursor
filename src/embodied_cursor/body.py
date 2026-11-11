@@ -69,6 +69,9 @@ class BodyConfig:
     scrub_probe: float = 6.0
     """Pixels of exploratory drag used to learn which way a control runs."""
 
+    scrub_cross: tuple[float, ...] = (0.5, 0.75, 0.25, 0.9, 0.1)
+    """Positions across a slider's thickness at which to feel for its handle."""
+
     scroll_rate: float = 25.0
     """Wheel notches per second."""
 

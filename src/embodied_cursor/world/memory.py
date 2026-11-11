@@ -55,6 +55,9 @@ class Memo:
     revealed_by: dict[str, str] | None = None
     """``{"app", "role", "name", "how"}`` of the element that brings this one up."""
 
+    grip: float | None = None
+    """For a slider: how far across its thickness the draggable part was found."""
+
     @property
     def key(self) -> Key:
         return (normalise_name(self.app), self.role, normalise_name(self.name))
@@ -112,6 +115,18 @@ class SpatialMemory:
                 memo = self._note(el, world, now)
                 memo.revealed_by = dict(link)
             self._dirty = True
+
+    def note_grip(self, el: UIElement, across: float, world: WorldModel) -> None:
+        """Record where on a range control a drag actually took hold."""
+        if not el.name:
+            return
+        with self._lock:
+            self._note(el, world, time.time()).grip = across
+            self._dirty = True
+
+    def grip(self, el: UIElement) -> float | None:
+        memo = self._memos.get(key_of(el))
+        return memo.grip if memo else None
 
     def _note(self, el: UIElement, world: WorldModel, now: float) -> Memo:
         key = key_of(el)
@@ -258,6 +273,7 @@ class SpatialMemory:
                     seen=int(raw.get("seen", 1)),
                     last_seen=float(raw.get("last_seen", 0.0)),
                     revealed_by=dict(raw["revealed_by"]) if raw.get("revealed_by") else None,
+                    grip=float(raw["grip"]) if raw.get("grip") is not None else None,
                 )
             except (KeyError, TypeError, ValueError):
                 continue

@@ -12,7 +12,7 @@ round-trip to the planner.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Generator, Sequence
 
 from .geometry import ZERO, Rect, Vec2
@@ -20,6 +20,7 @@ from .intents import Click, Drag, Expect, Hover, Intent, Key, Move, Scroll, Scru
 from .motor.controller import MotionGoal
 from .runtime import BUTTONS
 from .world.element import SURFACE_ROLES, Role, UIElement
+from .world.memory import RevealStep
 from .world.model import WorldModel
 from .world.selector import Selector
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 Skill = Generator[None, None, Any]
 
 _MENU_ROLES = frozenset({Role.MENU, Role.MENU_ITEM})
+_OPENERS = frozenset({Role.MENU, Role.COMBO_BOX})
 
 
 class SkillFailure(Exception):
@@ -51,6 +53,8 @@ class Aim:
 
     vel: Vec2 = ZERO
     element: UIElement | None = None
+    slipped: bool = False
+    """The target moved out from under the pointer while it was being clicked."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +176,32 @@ def menu_hazards(world: WorldModel, el: UIElement) -> list[Rect]:
     return out
 
 
+def structural_reveal(world: WorldModel, selector: Selector) -> list[RevealStep]:
+    """Menus to open, outermost first, to bring a hidden menu entry on screen.
+
+    Works from the element tree alone: toolkits list a menu's entries even
+    while it is closed, so the path ``File > Export as > PDF`` can be read off
+    the ancestors of the hidden entry without ever having seen it open.
+    """
+    for match in world.find(selector, visible_only=False):
+        el = match.element
+        if el.visible:
+            continue
+        chain: list[UIElement] = []
+        anchored = False
+        for a in world.ancestors(el):
+            if a.role in _OPENERS:
+                chain.append(a)
+            elif not a.visible:
+                break
+            if a.visible:
+                anchored = a.role in _OPENERS
+                break
+        if anchored and chain:
+            return [RevealStep(Selector(id=a.id), "click") for a in reversed(chain)]
+    return []
+
+
 def obstacles_for(ctx: "Context", el: UIElement | None, avoid: Sequence[Selector]) -> tuple[Rect, ...]:
     rects: list[Rect] = []
     for sel in avoid:
@@ -192,8 +222,14 @@ def _arrived(ctx: "Context", aim: Aim) -> bool:
     ctrl = ctx.controller
     if ctrl.remaining > ctrl.config.tau_min + 1e-9:
         return False
+    if (ctrl.vel - aim.vel).norm() >= 40.0:
+        return False
+    # Either right on the aim point (which may itself hug an edge), or, for a
+    # target being chased, comfortably inside it.
+    if ctx.pos.dist(aim.pos) <= 1.0 and aim.rect.inflate(0.5).contains(ctx.pos):
+        return True
     margin = min(2.0, aim.rect.w / 4.0, aim.rect.h / 4.0)
-    return aim.rect.contains(ctx.pos, margin) and (ctrl.vel - aim.vel).norm() < 40.0
+    return aim.rect.contains(ctx.pos, margin)
 
 
 def reach(
@@ -226,12 +262,13 @@ def reach(
                     reveal
                     and cfg.auto_reveal
                     and not tried_reveal
-                    and ctx.memory is not None
                     and target.selector is not None
                     and waited >= cfg.reveal_after
                 ):
                     tried_reveal = True
-                    steps = ctx.memory.reveal_chain(target.selector, ctx.world)
+                    steps = structural_reveal(ctx.world, target.selector)
+                    if not steps and ctx.memory is not None:
+                        steps = ctx.memory.reveal_chain(target.selector, ctx.world)
                     if steps:
                         ctx.emit("revealing", via=[s.selector.describe() for s in steps])
                         for step in steps:
@@ -358,6 +395,7 @@ def _click(
 ) -> Generator[None, None, Aim]:
     cfg = ctx.config
     aim = yield from reach(ctx, target, avoid, reveal=reveal)
+    pressed_at = ctx.now
     for i in range(count):
         if i:
             yield from pause(ctx, cfg.click_gap)
@@ -367,7 +405,32 @@ def _click(
         yield from pause(ctx, cfg.press_time)
         ctx.release(button)
     ctx.emit("clicked", element=target.id, at=list(ctx.pos.rounded()), count=count)
+    if aim.element is not None:
+        if (yield from _slipped(ctx, aim.element, pressed_at)):
+            aim = replace(aim, slipped=True)
     return aim
+
+
+def _slipped(ctx: "Context", el: UIElement, since: float) -> Generator[None, None, bool]:
+    """Did the target move out from under the pointer while it was being clicked?
+
+    Perception always trails the screen a little, so a target that teleports
+    in the instant before the press can still be missed. That cannot be
+    prevented, but it can be noticed: wait for one observation newer than the
+    press and see whether the element is still under the pointer.
+    """
+    deadline = ctx.now + 0.12
+    ctx.attend(el.id)
+    while ctx.world.last_seen(el.id) <= since and ctx.now < deadline:
+        ctx.hold()
+        yield
+    live = ctx.world.get(el.id)
+    if live is None or not live.visible or live.bounds == el.bounds:
+        return False
+    if live.bounds.contains(ctx.pos):
+        return False
+    ctx.emit("slipped", element=el.id, now_at=list(live.bounds.as_tuple()))
+    return True
 
 
 def _hover(
@@ -397,6 +460,8 @@ def _observed(aim: Aim, ctx: "Context", target: ElementTarget | None = None) -> 
         out["element"] = aim.element.to_obj()
     if target is not None and target.ambiguity:
         out["equally_good_matches"] = target.ambiguity
+    if aim.slipped:
+        out["target_moved_away"] = True
     return out
 
 
@@ -514,78 +579,131 @@ def scrub(ctx: "Context", intent: Scrub) -> Skill:
     want = intent.value if intent.value is not None else lo + span * intent.fraction  # type: ignore[operator]
     want = min(max(want, lo), hi)
     tolerance = intent.tolerance if intent.tolerance is not None else 0.01 * span
+    start_value = el.value
+    eps = span * 1e-9
 
     horizontal = el.bounds.w >= el.bounds.h
     axis = Vec2(1.0, 0.0) if horizontal else Vec2(0.0, 1.0)
     length = el.bounds.w if horizontal else el.bounds.h
     pad = min(el.bounds.w, el.bounds.h) / 2.0
     travel = max(length - 2.0 * pad, 1.0)
+
     # Pixels of pointer travel per unit of value. This first guess assumes a
     # linear control whose low end is at the left or top; it is corrected
     # from the control's actual response below.
     gain = travel / span
 
-    def handle(live: UIElement) -> tuple[float, float]:
-        along = (pad + (live.value_fraction or 0.0) * travel) / length
-        return (along, 0.5) if horizontal else (0.5, along)
+    if abs(want - start_value) <= min(tolerance, 0.5 / abs(gain)):
+        return {"value": start_value, "wanted": want, "started_at": start_value}
 
-    target.anchor = handle
-    yield from reach(ctx, target)
-    start_value = (ctx.world.get(ident) or el).value
-    ctx.press(1)
-    try:
-        yield from pause(ctx, cfg.press_time)
+    def read() -> Generator[None, None, UIElement]:
         live = yield from _fresh_value(ctx, ident, ctx.now)
-        if live is None:
+        if live is None or live.value is None:
             raise SkillFailure("not_found", "the control disappeared while being dragged")
+        return live
 
+    # -- take hold ---------------------------------------------------------
+    # The accessibility tree gives the control's box, not where its handle
+    # is. Along the track the handle is where the value says; across it, the
+    # box may include a label or readout. So feel for it: press, nudge, and
+    # if the value does not respond, let go and try a little off-centre.
+    live = el
+    grab = ctx.pos
+    grab_bounds = el.bounds
+    engaged = False
+    remembered = ctx.memory.grip(el) if ctx.memory is not None else None
+    # Quick nudges everywhere first; longer ones (which a stepped control
+    # needs before it clicks over) only once those have all come up empty.
+    attempts = [(c, (1.0,)) for c in cfg.scrub_cross[:3]]
+    attempts += [(c, (3.0, 9.0)) for c in cfg.scrub_cross[:3]]
+    attempts += [(c, (1.0, 3.0)) for c in cfg.scrub_cross[3:]]
+    if remembered is not None:
+        attempts.insert(0, (remembered, (1.0, 3.0, 9.0)))
+    for cross, scales in attempts:
+
+        def handle(now: UIElement, cross: float = cross) -> tuple[float, float]:
+            along = (pad + (now.value_fraction or 0.0) * travel) / length
+            return (along, cross) if horizontal else (cross, along)
+
+        target.anchor = handle
+        yield from reach(ctx, target)
+        before = (ctx.world.get(ident) or el).value
+        ctx.press(1)
+        yield from pause(ctx, cfg.press_time)
+        live = yield from read()
         grab = ctx.pos
         grab_bounds = live.bounds
-        swept = False
-        bounds = live.bounds
-        track_lo = (bounds.left if horizontal else bounds.top) + pad
+
+        track_lo = (grab_bounds.left if horizontal else grab_bounds.top) + pad
         along = ((grab.x if horizontal else grab.y) - track_lo) / travel
         after = live.value_fraction or 0.0
-        if abs(after - (1.0 - along)) < abs(after - along) - 0.1:
+        if abs(live.value - before) > eps and abs(after - (1.0 - along)) < abs(after - along) - 0.1:  # type: ignore[operator]
             # The press landed on the track, not the handle, and the value
             # jumped to the mirror image of where we pressed: the control's
             # high end is at the left or top.
             gain = -gain
 
-        probed = False
+        error = want - live.value  # type: ignore[operator]
+        toward = 1.0 if gain * error >= 0 else -1.0
+        s = 0.0
+        # Small nudges first; a stepped control needs a longer one to click over.
+        offsets = [toward * sign * cfg.scrub_probe * scale for scale in scales for sign in (1.0, -1.0)]
+        for offset in offsets:
+            ref_v = live.value
+            nudge = offset - s
+            s = offset
+            yield from reach(ctx, PointTarget(grab + axis * s, width=4.0))
+            live = yield from read()
+            dv = live.value - ref_v  # type: ignore[operator]
+            if abs(dv) > eps:
+                seen = nudge / dv
+                gain = seen if seen * gain < 0 else gain * (0.5 + 0.5 * min(max(seen / gain, 0.125), 8.0))
+                engaged = True
+                break
+        if engaged or abs(live.value - before) > eps:  # type: ignore[operator]
+            engaged = True
+            if ctx.memory is not None:
+                ctx.memory.note_grip(el, cross, ctx.world)
+            ctx.emit("gripped", across=cross)
+            break
+        ctx.release(1)
+        yield from pause(ctx, cfg.click_gap)
+
+    if not engaged:
+        raise SkillFailure(
+            "not_adjustable",
+            f"dragging {el.role} {el.name!r} had no effect on its value",
+            {"value": live.value, "wanted": want, "started_at": start_value},
+        )
+
+    # -- servo on the reported value -----------------------------------------
+    try:
+        swept = False
         best = float("inf")
         stale = 0
         stuck = 0
         for _ in range(cfg.scrub_iterations):
             error = want - live.value  # type: ignore[operator]
-            fine = min(tolerance, 0.5 / abs(gain))
-            if abs(error) <= fine:
+            if abs(error) <= min(tolerance, 0.5 / abs(gain)):
                 break
-            if abs(error) < best - span * 1e-9:
+            if abs(error) < best - eps:
                 best, stale = abs(error), 0
             else:
                 stale += 1
                 if stale >= 4:
                     break
             step = gain * error
-            if abs(step) < 0.5 and probed:
+            if abs(step) < 0.5:
                 break
             if abs(step) < 1.0:
                 step = 1.0 if step > 0 else -1.0
-            sweeping = probed
-            if not probed and abs(step) > cfg.scrub_probe:
-                # Feel the control out with a nudge before committing to a
-                # long drag in a direction that is so far only assumed.
-                step = cfg.scrub_probe if step > 0 else -cfg.scrub_probe
-            else:
-                sweeping = True
 
-            s_now = (ctx.pos - grab).dot(axis)
+            shift = Vec2(live.bounds.x - grab_bounds.x, live.bounds.y - grab_bounds.y)
+            s_now = (ctx.pos - grab - shift).dot(axis)
             # Never chase a mis-estimated gain off the end of the control.
-            bounds = (ctx.world.get(ident) or el).bounds
-            origin = grab.dot(axis)
-            low = (bounds.left if horizontal else bounds.top) - origin - pad
-            high = (bounds.right if horizontal else bounds.bottom) - origin + pad
+            origin = (grab + shift).dot(axis)
+            low = (live.bounds.left if horizontal else live.bounds.top) - origin - pad
+            high = (live.bounds.right if horizontal else live.bounds.bottom) - origin + pad
             s_next = min(max(s_now + step, low), high)
 
             def dest(c: "Context", s_next: float = s_next) -> Vec2:
@@ -593,29 +711,25 @@ def scrub(ctx: "Context", intent: Scrub) -> Skill:
                 now = (c.world.get(ident) or el).bounds
                 return grab + Vec2(now.x - grab_bounds.x, now.y - grab_bounds.y) + axis * s_next
 
-            ref_s, ref_v = s_now, live.value
+            ref_v = live.value
             yield from reach(
                 ctx,
                 PointTarget(dest, width=min(max(abs(s_next - s_now) / 2.0, 2.0), 12.0)),
-                duration=intent.duration if sweeping and not swept else None,
+                duration=None if swept else intent.duration,
             )
-            swept = swept or sweeping
-            probed = True
-            live = yield from _fresh_value(ctx, ident, ctx.now)
-            if live is None:
-                raise SkillFailure("not_found", "the control disappeared while being dragged")
+            swept = True
+            live = yield from read()
 
             shift = Vec2(live.bounds.x - grab_bounds.x, live.bounds.y - grab_bounds.y)
-            ds = (ctx.pos - grab - shift).dot(axis) - ref_s
+            ds = (ctx.pos - grab - shift).dot(axis) - s_now
             dv = live.value - ref_v  # type: ignore[operator]
-            if abs(ds) >= 1.0 and abs(dv) > span * 1e-9:
+            if abs(ds) >= 1.0 and abs(dv) > eps:
                 seen = ds / dv
                 if seen * gain < 0:
                     # The control runs the other way round; adopt that outright.
                     gain = seen
                 else:
-                    ratio = min(max(seen / gain, 0.125), 8.0)
-                    gain *= 0.5 + 0.5 * ratio
+                    gain *= 0.5 + 0.5 * min(max(seen / gain, 0.125), 8.0)
                 stuck = 0
             elif abs(ds) >= 8.0:
                 stuck += 1

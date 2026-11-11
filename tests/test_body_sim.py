@@ -66,6 +66,27 @@ def test_target_that_jumps_mid_flight_is_followed_without_stopping(desk):
     assert max_tick_jump(body) < 400
 
 
+def test_a_target_that_escapes_during_the_press_is_reported(desk):
+    def run(escape_at=None):
+        d = SimDesktop(pointer=Vec2(200, 800))
+        win = d.add(Window("Editor", Rect(100, 100, 1400, 800)))
+        btn = win.add(Button("Save", Rect(1200, 300, 90, 32)))
+        if escape_at is not None:
+            d.at(escape_at, lambda: btn.move_to(600, 600))
+        body = make_body(d)
+        out = do(body, action="click", target='button "Save"')
+        press = next(e["t"] for e in body.trace.events if e["kind"] == "press")
+        return out, btn, press
+
+    out, btn, press = run()
+    assert btn.clicks == 1 and "target_moved_away" not in out.observed
+
+    # Too late for perception to have seen it before the button went down.
+    out, btn, _ = run(escape_at=press - 0.004)
+    assert btn.clicks == 0
+    assert out.observed.get("target_moved_away") is True
+
+
 def test_target_that_slides_continuously_is_tracked(desk):
     btn = desk.win.add(Button("Drifting", Rect(900, 300, 80, 30)))
     desk.animate(btn, Vec2(400, 250), 3.0, linear=True)
@@ -288,6 +309,34 @@ def test_scrub_follows_a_slider_that_moves_while_being_dragged(desk):
     assert s.value == pytest.approx(80, abs=1.0)
 
 
+def test_scrub_feels_for_the_part_of_a_slider_that_responds(desk, tmp_path):
+    """Reported bounds often include dead space, such as a value readout."""
+    s = desk.win.add(Slider("Volume", Rect(400, 500, 400, 30), value=20, band=(0.6, 1.0)))
+    memory = SpatialMemory.load(tmp_path / "memory.json")
+    body = make_body(desk, memory=memory)
+    out = do(body, action="scrub", target='slider "Volume"', value=73)
+    assert out.ok, out.describe()
+    assert s.value == pytest.approx(73, abs=1.0)
+    assert s.grabs == 2
+    grip = next(e for e in body.trace.events if e["kind"] == "gripped")
+    assert grip["across"] == 0.75
+
+    # Having found it once, it goes straight there the next time.
+    out = do(body, action="scrub", target='slider "Volume"', value=30)
+    assert out.ok, out.describe()
+    assert s.value == pytest.approx(30, abs=1.0)
+    assert s.grabs == 3
+
+
+def test_scrub_gives_up_on_a_slider_that_does_not_respond(desk):
+    s = desk.win.add(Slider("Locked", Rect(400, 500, 400, 30), value=20, band=(2.0, 3.0)))
+    body = make_body(desk)
+    out = do(body, action="scrub", target='slider "Locked"', value=73)
+    assert out.status == "failed" and out.reason == "not_adjustable", out.describe()
+    assert s.value == 20
+    assert not desk._down
+
+
 def test_scrub_refuses_something_without_a_value(desk):
     desk.win.add(Button("Plain", Rect(400, 500, 100, 30)))
     body = make_body(desk)
@@ -363,6 +412,17 @@ def test_memory_replays_the_menu_path_without_a_planner(desk, tmp_path):
     assert out.ok, out.describe()
     assert pdf.activated == 2
     assert "revealing" in body2.trace.kinds()
+
+
+def test_closed_menu_path_is_read_off_the_element_tree(desk):
+    """No memory and no planner: the hidden entry's ancestors say what to open."""
+    file, edit, export, pdf = build_menus(desk)
+    body = make_body(desk, snapshot_hz=60)
+    out = do(body, action="click", target='menu_item "As PDF"')
+    assert out.ok, out.describe()
+    assert pdf.activated == 1
+    reveal = next(e for e in body.trace.events if e["kind"] == "revealing")
+    assert len(reveal["via"]) == 2
 
 
 # -- drag, scroll, type -------------------------------------------------------

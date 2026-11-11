@@ -229,9 +229,13 @@ class Slider(Widget):
         curve: Callable[[float], float] | None = None,
         inverse: Callable[[float], float] | None = None,
         handle: float | None = None,
+        band: tuple[float, float] = (0.0, 1.0),
     ) -> None:
         super().__init__(name, rect)
         self.lo, self.hi, self.value = lo, hi, value
+        # Part of the thickness that actually responds; the rest is dead space
+        # such as a value readout drawn inside the control's bounds.
+        self.band = band
         self.step = step
         self.reverse = reverse
         self.curve = curve or (lambda f: f)
@@ -281,7 +285,10 @@ class Slider(Widget):
         if button != 1 or not self.enabled:
             return
         along = p.x if self.horizontal else p.y
+        across = (p.y - self.rect.top) / self.rect.h if self.horizontal else (p.x - self.rect.left) / self.rect.w
         self.grabs += 1
+        if not self.band[0] <= across <= self.band[1]:
+            return
         if self.handle_rect().contains(p):
             c = self.handle_center()
             self._grab = along - (c.x if self.horizontal else c.y)
