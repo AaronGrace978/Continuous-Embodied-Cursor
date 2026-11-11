@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A small GTK 3 window full of things a pointer has to cope with.
 
 Used for the live desktop tests and as something to point ``cec`` at:

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """X11 backend: pointer actuation and the window stack.
 
 Talks to the X server through ``ctypes`` bindings to libX11, libXtst,

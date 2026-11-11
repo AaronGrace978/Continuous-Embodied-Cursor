@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Two speeds: a planner that thinks in goals, a body that moves in real time.
 
 The planner is consulted at decision points only: at the start, when an

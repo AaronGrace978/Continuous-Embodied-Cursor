@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A planner backed by a language model behind an OpenAI-compatible API.
 
 Works with anything that speaks ``POST /chat/completions``: a hosted API or a

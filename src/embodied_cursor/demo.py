@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Self-contained demonstrations on the simulated desktop.
 
 Each scenario stages one situation the architecture exists for, runs it

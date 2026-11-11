@@ -106,4 +106,4 @@ These are the edges of what this tree does today.
 
 ## License
 
-GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
+GNU Affero General Public License v3.0 or later. It is the GPL with one further term: anyone who runs a modified copy as a network service must offer its source to the people using it. See [LICENSE](LICENSE).

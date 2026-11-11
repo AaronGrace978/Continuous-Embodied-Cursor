@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Intents: the vocabulary the slow brain uses to instruct the fast body.
 
 An intent says *what* should happen to *which* element, in semantic terms. It

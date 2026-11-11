@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The world model: the agent's continuously updated picture of the screen.
 
 It is built entirely from structured sources (accessibility trees, window

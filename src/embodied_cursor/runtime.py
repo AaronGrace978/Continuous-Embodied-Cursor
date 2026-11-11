@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Interfaces between the portable core and a concrete desktop.
 
 A desktop backend supplies three things: a clock, an actuator that moves the

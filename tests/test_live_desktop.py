@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """End-to-end on a real X11 desktop: XTEST in, AT-SPI out, a GTK app in between.
 
 These drive the actual pointer, so they are skipped unless a display, the

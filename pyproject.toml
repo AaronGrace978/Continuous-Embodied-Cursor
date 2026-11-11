@@ -8,12 +8,12 @@ version = "0.1.0"
 description = "A continuous, closed-loop, physically modelled pointer for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "GPL-3.0-or-later" }
+license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "Continuous Embodied Cursor contributors" }]
 keywords = ["cursor", "agent", "accessibility", "motor-control", "hci"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: Desktop Environment",

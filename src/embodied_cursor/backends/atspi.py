@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """AT-SPI backend: the Linux accessibility tree as a perception source.
 
 AT-SPI is the same interface screen readers use. Every accessible

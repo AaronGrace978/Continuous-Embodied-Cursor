@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """What the planner is shown: the screen as a short structured listing.
 
 No pixels are involved. The listing is built from the world model, grouped by

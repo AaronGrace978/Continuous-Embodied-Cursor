@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Draw a recorded run as a self-contained SVG.
 
 The top panel is the screen: where the cursor went, one dot per motor tick

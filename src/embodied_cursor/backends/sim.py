@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A simulated desktop.
 
 It is a clock, an actuator and a perception source in one, with a small set

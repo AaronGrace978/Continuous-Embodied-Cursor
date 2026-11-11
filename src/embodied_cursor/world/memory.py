@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Spatial and affordance memory.
 
 Two things are remembered across runs, both keyed by an element's semantic

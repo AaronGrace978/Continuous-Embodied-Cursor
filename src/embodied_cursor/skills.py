@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Motor skills: the closed-loop routines that carry out intents.
 
 Each skill is a generator that the body steps once per motor tick. On every

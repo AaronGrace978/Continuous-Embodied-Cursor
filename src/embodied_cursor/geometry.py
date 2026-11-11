@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Small 2-D geometry kit shared by perception and motor code.
 
 Coordinates are global desktop pixels: x grows right, y grows down, and the

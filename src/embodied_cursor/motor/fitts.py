@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Movement-time law.
 
 Fitts's law (Shannon form, MacKenzie 1992) predicts how long a person takes to

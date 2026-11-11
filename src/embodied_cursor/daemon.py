@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A long-lived local service that owns the cursor.
 
 Perception keeps running between requests, so the world model is already

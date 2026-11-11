@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """An offline planner for plainly worded instructions.
 
 It understands a small command language ("click Export", "open File > Export

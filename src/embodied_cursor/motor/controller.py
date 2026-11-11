@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Continuous-time motion controller for the pointer.
 
 The controller owns the cursor's kinematic state ``(position, velocity,

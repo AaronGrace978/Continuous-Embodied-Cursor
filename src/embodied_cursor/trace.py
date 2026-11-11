@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Flight recorder for the motor loop.
 
 Every tick's kinematic state and every notable event (target locked,
