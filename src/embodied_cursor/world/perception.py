@@ -172,6 +172,15 @@ class Perception:
 
     def _run(self) -> None:
         try:
+            self._run_frames()
+        finally:
+            for source in self.sources:
+                cleanup = getattr(source, "close_thread", None)
+                if cleanup:
+                    cleanup()
+
+    def _run_frames(self) -> None:
+        try:
             self.prime()
         except Exception as exc:
             self.stats.errors += 1

@@ -37,7 +37,7 @@ def _planner(kind: str) -> Planner:
 
 
 def _session(args: argparse.Namespace):  # type: ignore[no-untyped-def]
-    from .backends.linux import open_session
+    from .backends.desktop import open_session
     from .backends.x11 import BackendUnavailable
     from .motor.controller import MotorConfig
 

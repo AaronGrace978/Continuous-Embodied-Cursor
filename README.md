@@ -9,11 +9,49 @@ pip install -e ".[dev]"
 cec demo --out traces
 ```
 
-`cec demo` needs no display. On a Linux desktop with X11 and AT-SPI:
+`cec demo` is a simulation and does not move the system pointer. On a Linux desktop with X11 and AT-SPI:
 
 ```
 cec look
 cec do 'open File > Export as > PDF document; set Volume to 30'
+```
+
+## Windows
+
+Install with Python 3.10 or newer in PowerShell on the Windows desktop you want to control:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python -m pip install -e ".[dev,windows]"
+.\.venv\Scripts\cec look
+.\.venv\Scripts\cec do 'click Calculator'
+```
+
+The CLI automatically selects the native Windows backend. `look` lists actual
+controls exposed through Windows UI Automation. Choose a visible name from that
+listing for `do` or `intent`. The Windows backend uses SetCursorPos/GetCursorPos,
+SendInput for buttons, wheel and keyboard, UTF-16 Unicode text input, per-monitor
+DPI awareness, and EnumDisplayMonitors for desktop geometry (including negative
+monitor coordinates). UI Automation provides the control hierarchy, live bounds,
+focus, enabled/visible/selected/checked/expanded states, editable text and range
+values. The existing closed-loop motor and human-override detection are shared.
+
+Run this inside an interactive Windows session, not WSL or a Windows service.
+Windows prevents a normal process injecting input into elevated applications;
+run both at the same integrity level. Secure desktops, including UAC prompts,
+are not supported. Custom applications must expose controls through UI Automation;
+there is no screenshot fallback. `--display` remains an X11-only option.
+
+`cec daemon` and `cec send` use a per-user Windows named pipe with the Windows
+default DACL (owner, administrators and SYSTEM). `--socket` may override the full
+pipe name (`\\.\pipe\your-name`). Pipe messages are UTF-8 JSON byte messages;
+Unix sockets continue to use newline-delimited JSON. Windows spatial memory is
+stored under `%LOCALAPPDATA%\embodied-cursor\memory.json`.
+
+To validate real Windows input and perception (these tests move your pointer):
+
+```powershell
+.\.venv\Scripts\python -m pytest -q tests/test_windows_desktop.py
 ```
 
 ## Two speeds
@@ -75,7 +113,7 @@ src/embodied_cursor/
   skills.py     reach, click, drag, scrub, type, scroll: generators stepped every tick
   body.py       the 120 Hz loop
   brain/        text observation, the planner protocol, heuristic and LLM planners, the agent
-  backends/     simulated desktop, and Linux: X11/XTEST plus AT-SPI
+  backends/     simulator, Linux X11/XTEST + AT-SPI, Windows Win32 + UI Automation
   cli.py        cec
   daemon.py     the local socket
   render.py     an SVG of a recorded trace
@@ -97,8 +135,8 @@ The live tests drive the actual pointer. Leave the mouse alone while they run. T
 
 These are the edges of what this tree does today.
 
-- The live backend is Linux with an X11 display. A Wayland session works only through XWayland, and the pointer moved is the X pointer. Windows and macOS are not implemented.
-- The actuator is XTEST: motion, buttons, keys and the wheel. That protocol has no pressure axis, and this program does not open `/dev/uinput`.
+- The Linux live backend requires an X11 display. A Wayland session works only through XWayland, and the pointer moved is the X pointer. Windows uses its native Win32/UI Automation backend. macOS is not implemented.
+- The Linux actuator is XTEST: motion, buttons, keys and the wheel. That protocol has no pressure axis, and this program does not open `/dev/uinput`.
 - The controller is arithmetic in this process. It does not need a GPU. A language model, if you configure one, is a separate HTTP server. The tests of that path use a local stub; no model is shipped or called from here.
 - Perception reads the window stack and the AT-SPI tree. An application that does not expose itself there is a titled rectangle. Chromium puts its page into the accessibility tree when started with `--force-renderer-accessibility`. There is no Chrome DevTools client.
 - A target that leaves in the instant the button goes down is reported as `target_moved_away`. The planner can retry. The press itself cannot be taken back.

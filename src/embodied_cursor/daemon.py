@@ -25,6 +25,9 @@ import queue
 import socket
 import socketserver
 import threading
+import sys
+import getpass
+import hashlib
 from pathlib import Path
 from typing import Any, Callable
 
@@ -39,6 +42,10 @@ PlannerFactory = Callable[[str], Planner]
 
 
 def default_socket_path() -> Path:
+    if sys.platform == "win32":
+        user = os.environ.get("USERDOMAIN", "") + "\\" + getpass.getuser()
+        suffix = hashlib.sha256(user.encode()).hexdigest()[:20]
+        return Path(r"\\.\pipe\embodied-cursor-" + suffix)
     base = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/embodied-cursor-{os.getuid()}"
     return Path(base) / "embodied-cursor.sock"
 
@@ -59,6 +66,12 @@ class Daemon:
     # -- serving ---------------------------------------------------------
 
     def start(self) -> None:
+        if sys.platform == "win32":
+            from .backends.windows_pipe import PipeServer
+            if _alive(self.path):
+                raise RuntimeError(f"another daemon is already listening on {self.path}")
+            self._server = PipeServer(self)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.path.exists():
             if _alive(self.path):
@@ -138,7 +151,8 @@ class Daemon:
         if server is not None:
             server.server_close()
             try:
-                self.path.unlink()
+                if sys.platform != "win32":
+                    self.path.unlink()
             except OSError:
                 pass
 
@@ -230,6 +244,12 @@ class _Turn:
 
 
 def _alive(path: Path) -> bool:
+    if sys.platform == "win32":
+        from .backends.windows_pipe import request as pipe_request
+        try:
+            return bool(pipe_request({"op": "status"}, path, timeout=0.5).get("ok"))
+        except (OSError, EOFError):
+            return False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
             s.settimeout(0.5)
@@ -242,6 +262,9 @@ def _alive(path: Path) -> bool:
 def request(obj: dict[str, Any], socket_path: Path | str | None = None, timeout: float | None = 300.0) -> dict[str, Any]:
     """Send one request to a running daemon and return its reply."""
     path = Path(socket_path) if socket_path else default_socket_path()
+    if sys.platform == "win32":
+        from .backends.windows_pipe import request as pipe_request
+        return pipe_request(obj, path, timeout)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         s.connect(str(path))

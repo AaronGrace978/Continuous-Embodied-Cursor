@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import stat
+import sys
 import threading
 
 import pytest
@@ -13,6 +14,8 @@ from embodied_cursor.backends.sim import Button, SimDesktop, Slider, Window, mak
 from embodied_cursor.brain.heuristic import HeuristicPlanner
 from embodied_cursor.daemon import Daemon, request
 from embodied_cursor.geometry import Rect, Vec2
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Unix socket transport; Windows named pipes have separate tests")
 
 
 @pytest.fixture
