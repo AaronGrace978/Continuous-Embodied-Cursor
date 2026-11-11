@@ -1226,33 +1226,197 @@ def scroll(ctx: "Context", intent: Scroll) -> Skill:
     if intent.target is not None:
         target = ElementTarget(intent.target)
         yield from reach(ctx, target)
-    gap = 1.0 / cfg.scroll_rate
+    spacing = 1.0 / cfg.scroll_rate
 
     if intent.notches is not None:
         sign = 1 if intent.notches > 0 else -1
         for _ in range(abs(intent.notches)):
+            ctx.hold()
             ctx.actuator.scroll(0, sign)
-            yield from pause(ctx, gap)
+            yield from pause(ctx, spacing)
         return {"notches": intent.notches}
 
     assert intent.until is not None
-    sign = 1 if intent.direction == "down" else -1
+    # A stated direction is only the fallback. When the element is already in
+    # the tree — clipped, not gone — its position says which way to turn, and
+    # the first notch says how far one turn goes.
+    fallback = 1 if intent.direction == "down" else -1
     turned = 0
+    net = 0
+    container = target.element(ctx) if target is not None else None
+    view = container.bounds if container is not None else None
+
+    def notch(sign: int, n: int) -> Generator[None, None, bool]:
+        nonlocal turned, net
+        for _ in range(n):
+            if turned >= cfg.scroll_limit:
+                return False
+            ctx.hold()
+            ctx.actuator.scroll(0, sign)
+            turned += 1
+            net += sign
+            yield
+        return True
+
+    def give_up() -> None:
+        raise SkillFailure(
+            "not_found",
+            f"{intent.until.describe()} did not come into view after {turned} notches",
+        )
+
+    def showing(el: UIElement) -> bool:
+        return bool(ctx.world.visible_region(el))
+
+    def succeed(el: UIElement) -> dict[str, Any]:
+        ctx.emit("scrolled_into_view", element=el.id, notches=net)
+        return {"notches": net, "element": el.to_obj()}
+
+    def blind(sign: int) -> Generator[None, None, dict[str, Any]]:
+        """Turn one way until the element appears. Used when its position is unknown."""
+        while True:
+            for m in ctx.world.find(intent.until):
+                if showing(m.element):
+                    return succeed(m.element)
+            if turned >= cfg.scroll_limit:
+                give_up()
+            if not (yield from notch(sign, 1)):
+                give_up()
+            yield from pause(ctx, max(spacing, 2.5 * ctx.perception.period))
+
+    def locate() -> UIElement | None:
+        found = ctx.world.find(intent.until, visible_only=False)
+        if not found:
+            return None
+        el = found[0].element
+        ctx.attend(el.id)
+        # A toolkit that has not realised the row yet reports an empty box.
+        # That says nothing about where it will scroll in from.
+        if el.bounds.empty or min(el.bounds.w, el.bounds.h) < 1.0:
+            return None
+        return el
+
+    def gap_of(el: UIElement) -> float:
+        """Signed pixels the element still sticks out of the view.
+
+        Positive means it is below the view. Zero means a short element fits
+        inside, or a tall one already covers a useful part of the view.
+        """
+        assert view is not None
+        if el.bounds.h <= view.h + 1.0:
+            if el.bounds.top >= view.top - 1.0 and el.bounds.bottom <= view.bottom + 1.0:
+                return 0.0
+            if el.bounds.center.y <= view.center.y:
+                return el.bounds.top - view.top
+            return el.bounds.bottom - view.bottom
+        overlap = el.bounds.intersection(view).h
+        if overlap >= min(view.h, el.bounds.h) * 0.5:
+            return 0.0
+        if el.bounds.center.y <= view.center.y:
+            return el.bounds.bottom - view.top
+        return el.bounds.top - view.bottom
+
+    def await_settled(ident: str, after: float) -> Generator[None, None, None]:
+        """Wait until the element's reported position has stopped changing.
+
+        Observations keep arriving for a while after the wheel has stopped, and
+        an early one can still show the row where it was. Stillness is trusted
+        only after ``patience``; a position that moves is trusted once it holds
+        still for a couple of frames.
+        """
+        patience = 0.12
+        earliest = ctx.now + patience
+        deadline = ctx.now + 0.5
+        last_y: float | None = None
+        stable_since: float | None = None
+        moved = False
+        while ctx.now < deadline:
+            ctx.hold()
+            yield
+            el = ctx.world.get(ident)
+            stamp = ctx.world.last_seen(ident) or 0.0
+            if el is None or stamp <= after:
+                continue
+            y = el.bounds.center.y
+            if last_y is None or abs(y - last_y) >= 0.5:
+                moved = last_y is not None
+                last_y = y
+                stable_since = ctx.now
+                continue
+            assert stable_since is not None
+            if ctx.now - stable_since >= 0.04 and (moved or ctx.now >= earliest):
+                return
+
+    el = locate()
+    if el is None or view is None:
+        return (yield from blind(fallback))
+
+    gap = gap_of(el)
+    if abs(gap) <= 1.0 and showing(el):
+        return succeed(el)
+
+    # One notch tells us which way this control's wheel runs, and how many
+    # pixels of the element one turn is worth.
+    guess = 1 if gap > 0.0 else -1
+    y0 = el.bounds.center.y
+    seen = ctx.world.last_seen(el.id) or 0.0
+    if not (yield from notch(guess, 1)):
+        give_up()
+    yield from await_settled(el.id, seen)
+    el = locate()
+    if el is None:
+        return (yield from blind(fallback))
+    moved = y0 - el.bounds.center.y
+    if abs(moved) < 0.5:
+        seen = ctx.world.last_seen(el.id) or 0.0
+        y0 = el.bounds.center.y
+        if not (yield from notch(-guess, 1)):
+            give_up()
+        yield from await_settled(el.id, seen)
+        el = locate()
+        if el is None:
+            return (yield from blind(fallback))
+        moved = y0 - el.bounds.center.y
+        guess = -guess
+    if abs(moved) < 0.5:
+        return (yield from blind(fallback))
+    # Pixels the element moves up per downward notch.
+    px = moved / guess
+
+    last_gap: float | None = None
+    single = False
     while True:
-        for m in ctx.world.find(intent.until):
-            if ctx.world.visible_region(m.element):
-                ctx.emit("scrolled_into_view", element=m.element.id, notches=turned)
-                return {"notches": turned * sign, "element": m.element.to_obj()}
+        el = locate()
+        if el is None:
+            return (yield from blind(fallback))
+        gap = gap_of(el)
+        visible = showing(el)
+        if visible and abs(gap) <= max(1.0, 0.45 * abs(px)):
+            return succeed(el)
+        if last_gap is not None and gap * last_gap < 0.0 and visible:
+            return succeed(el)
         if turned >= cfg.scroll_limit:
-            raise SkillFailure(
-                "not_found",
-                f"{intent.until.describe()} did not come into view after {turned} notches",
-            )
-        ctx.actuator.scroll(0, sign)
-        turned += 1
-        # Give the application and the perception stream a frame or two to
-        # show what the notch brought in before deciding on the next one.
-        yield from pause(ctx, max(gap, 2.5 * ctx.perception.period))
+            give_up()
+        need = gap / px
+        if abs(need) < 0.5:
+            if visible:
+                return succeed(el)
+            step = 1 if need >= 0.0 else -1
+            single = True
+        elif single or abs(need) < 1.0:
+            step = 1 if need >= 0.0 else -1
+        else:
+            # Leave the last notch for the next look, so a slightly wrong
+            # pitch cannot fling the row out the other side.
+            step = int(need)
+            if abs(step) > 1:
+                step -= 1 if step > 0 else -1
+            step = max(-6, min(6, step))
+        y0 = el.bounds.center.y
+        seen = ctx.world.last_seen(el.id) or 0.0
+        if not (yield from notch(1 if step > 0 else -1, abs(step))):
+            give_up()
+        yield from await_settled(el.id, seen)
+        last_gap = gap
 
 
 def type_text(ctx: "Context", intent: Type) -> Skill:

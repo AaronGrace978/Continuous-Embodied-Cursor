@@ -457,11 +457,59 @@ def test_scroll_until_a_row_comes_into_view(desk):
     out = do(body, action="scroll", target='list "Files"', until='list_item "Row 41"')
     assert out.ok, out.describe()
     assert lst.offset > 0
+    row = desk.find("Row 41")
+    # The row is brought fully inside, not left as a one-pixel sliver.
+    assert row.rect.top >= lst.rect.top - 1
+    assert row.rect.bottom <= lst.rect.bottom + 1
     out = do(body, action="click", target='list_item "Row 41"')
     assert out.ok, out.describe()
     assert desk.find("Row 41").clicks == 1
     at = Vec2(*desk.events("click", "Row 41")[0][3]["at"])
     assert lst.rect.contains(at)
+
+
+def test_scroll_goes_up_when_the_row_is_above_even_if_told_down(desk):
+    rows = [f"Row {i}" for i in range(60)]
+    lst = desk.win.add(ScrollList("Files", Rect(300, 200, 300, 240), rows))
+    lst.offset = 50 * lst.ROW_H
+    lst._layout()
+    body = make_body(desk, snapshot_hz=60)
+    assert not body.world.find('list_item "Row 2"')
+    out = do(body, action="scroll", target='list "Files"', until='list_item "Row 2"', direction="down")
+    assert out.ok, out.describe()
+    assert out.observed["notches"] < 0
+    row = desk.find("Row 2")
+    assert row.rect.top >= lst.rect.top - 1
+    assert row.rect.bottom <= lst.rect.bottom + 1
+
+
+def test_scroll_learns_when_the_wheel_runs_backwards(desk):
+    rows = [f"Row {i}" for i in range(60)]
+    lst = desk.win.add(ScrollList("Files", Rect(300, 200, 300, 240), rows))
+    real = lst.on_scroll
+    lst.on_scroll = lambda dy: real(-dy)
+    body = make_body(desk, snapshot_hz=60)
+    out = do(body, action="scroll", target='list "Files"', until='list_item "Row 41"')
+    assert out.ok, out.describe()
+    row = desk.find("Row 41")
+    assert row.rect.top >= lst.rect.top - 1
+    assert row.rect.bottom <= lst.rect.bottom + 1
+    # Down would have increased the offset; the learned sign went the other way.
+    assert out.observed["notches"] < 0
+
+
+def test_scroll_still_finds_the_row_when_perception_lags():
+    desk = SimDesktop(pointer=Vec2(200, 800), latency=0.08)
+    win = desk.add(Window("Editor", Rect(100, 100, 1400, 800)))
+    lst = win.add(ScrollList("Files", Rect(300, 200, 300, 240), [f"Row {i}" for i in range(60)]))
+    real = lst.on_scroll
+    lst.on_scroll = lambda dy: real(-dy)
+    body = make_body(desk, snapshot_hz=60)
+    out = do(body, action="scroll", target='list "Files"', until='list_item "Row 41"')
+    assert out.ok, out.describe()
+    row = desk.find("Row 41")
+    assert row.rect.top >= lst.rect.top - 1
+    assert row.rect.bottom <= lst.rect.bottom + 1
 
 
 def test_scroll_gives_up_when_the_row_never_shows(desk):

@@ -38,6 +38,8 @@ The sweep also stops short, by a margin on the order of the prepared-for latency
 
 The lag of a continuous control is measured from the first lean: the time from the pointer's first movement to the first change in the value, trusted only if the value keeps changing afterwards. A stepped control answers once, when a step is crossed, and that guess is thrown out.
 
+Scrolling uses the same idea on the wheel. A row that is clipped still has a place in the tree, and that place says which way to turn. The first notch measures how many pixels one turn moves the row, including a control whose wheel runs backwards. Later turns come in short bursts that shrink as the row approaches, and they stop once the row sits inside the view, so the search does not depend on being told "down". When the row is not in the tree at all, the wheel falls back to turning the stated way until it appears or the limit is reached.
+
 ## Embodied spatial presence
 
 The controller's state is `(position, velocity, acceleration)`, plus which buttons are held. Skills can ask for a moving goal with a feed-forward velocity, which is how a sweep tracks a reference instead of trailing it.
