@@ -4,55 +4,100 @@ It moves your cursor so you don't have to.
 
 The pointer is a small dynamical system. A planner names what should happen — *open File, then Export as PDF; set Volume to 30* — and a fast loop carries it out: minimum-jerk reaches, re-aimed every tick from the accessibility tree, slowed for small targets, bent around menus, and closed on the value a slider actually reports.
 
+Native desktop control is available on **Windows and Linux**. The CLI selects
+the backend for the operating system automatically; both use the same motor
+controller, planners, intents, trace recording, and human-override detection.
+
+## Platform support
+
+| Environment | Pointer and keyboard | Perception | Daemon transport |
+|---|---|---|---|
+| Windows 10/11 desktop | Native Win32 input | Windows UI Automation | Windows named pipe |
+| Linux X11 desktop | X11/XTEST | Window stack and AT-SPI | Unix socket |
+| Simulator | In-process simulated input | Simulated controls | No desktop required |
+
+The simulator runs without a display. **`cec demo` does not move your real
+cursor.** Use `cec look` followed by `cec do` or `cec intent` for live control.
+
+## Quick start
+
+Use Python 3.10 or newer. Start from a checkout of this repository:
+
+```text
+git clone https://github.com/AaronGrace978/Continuous-Embodied-Cursor.git
+cd Continuous-Embodied-Cursor
 ```
-pip install -e ".[dev]"
+
+### Windows (PowerShell)
+
+Run these commands with Windows Python on the interactive desktop you want to
+control. The `windows` extra installs `comtypes` for UI Automation. Calling the
+virtual environment's executables directly avoids PowerShell activation settings.
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,windows]"
+.\.venv\Scripts\cec.exe demo --out traces
+.\.venv\Scripts\cec.exe look
+```
+
+Open the application you want to control and choose a visible control name from
+`look`. For example, if it lists a Save button:
+
+```powershell
+.\.venv\Scripts\cec.exe do 'click Save'
+.\.venv\Scripts\cec.exe do 'press ctrl+s'
+```
+
+### Linux (Bash)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
 cec demo --out traces
 ```
 
-`cec demo` is a simulation and does not move the system pointer. On a Linux desktop with X11 and AT-SPI:
+Live control requires an X11 display and the X11/XTEST libraries. AT-SPI with
+PyGObject supplies application controls; without it, perception falls back to
+window rectangles. With an accessible application open:
 
-```
+```bash
 cec look
 cec do 'open File > Export as > PDF document; set Volume to 30'
 ```
 
-## Windows
+Choose names that appear in your own `cec look` output. The examples depend on
+the application exposing those menus and controls.
 
-Install with Python 3.10 or newer in PowerShell on the Windows desktop you want to control:
+## Native Windows backend
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\python -m pip install -e ".[dev,windows]"
-.\.venv\Scripts\cec look
-.\.venv\Scripts\cec do 'click Calculator'
-```
+The Windows backend adds:
 
-The CLI automatically selects the native Windows backend. `look` lists actual
-controls exposed through Windows UI Automation. Choose a visible name from that
-listing for `do` or `intent`. The Windows backend uses SetCursorPos/GetCursorPos,
-SendInput for buttons, wheel and keyboard, UTF-16 Unicode text input, per-monitor
-DPI awareness, and EnumDisplayMonitors for desktop geometry (including negative
-monitor coordinates). UI Automation provides the control hierarchy, live bounds,
-focus, enabled/visible/selected/checked/expanded states, editable text and range
-values. The existing closed-loop motor and human-override detection are shared.
+- **Real pointer movement and readback:** `SetCursorPos` and `GetCursorPos` drive
+  the system pointer and feed its actual position back into the controller.
+- **Mouse and keyboard input:** `SendInput` handles left, middle and right
+  buttons, dragging, vertical and horizontal wheel input, key chords, navigation
+  and function keys, and UTF-16 text including emoji.
+- **Structured perception:** UI Automation reads control names, roles,
+  hierarchy, live bounds, focus, visibility, enabled state, selection, checkboxes,
+  expanded controls, editable text and range values when the application exposes
+  the corresponding properties and patterns.
+- **Desktop geometry:** monitor enumeration, per-monitor DPI awareness and
+  negative coordinates support desktops spanning multiple monitors.
+- **Persistent sessions:** the daemon uses a named pipe, while spatial memory
+  is saved under `%LOCALAPPDATA%\embodied-cursor\memory.json`.
 
-Run this inside an interactive Windows session, not WSL or a Windows service.
-Windows prevents a normal process injecting input into elevated applications;
-run both at the same integrity level. Secure desktops, including UAC prompts,
-are not supported. Custom applications must expose controls through UI Automation;
-there is no screenshot fallback. `--display` remains an X11-only option.
+UI Automation runs on the perception thread with its own COM initialization
+and cleanup. Full snapshots are traversed incrementally; attended controls are
+refreshed separately for the shared motor loop. Linux retains its X11/XTEST
+and AT-SPI backends.
 
-`cec daemon` and `cec send` use a per-user Windows named pipe with the Windows
-default DACL (owner, administrators and SYSTEM). `--socket` may override the full
-pipe name (`\\.\pipe\your-name`). Pipe messages are UTF-8 JSON byte messages;
-Unix sockets continue to use newline-delimited JSON. Windows spatial memory is
-stored under `%LOCALAPPDATA%\embodied-cursor\memory.json`.
-
-To validate real Windows input and perception (these tests move your pointer):
-
-```powershell
-.\.venv\Scripts\python -m pytest -q tests/test_windows_desktop.py
-```
+Use Windows Python for this backend. WSL selects the Linux backend and requires
+an X11 display. An interactive Windows desktop is required; Windows services and
+secure desktops such as UAC prompts are not supported. Windows can block input
+into elevated applications from a normal process (UIPI), so run the controller
+and target at the same integrity level. `--display` is an X11-only option.
 
 ## Two speeds
 
@@ -83,7 +128,7 @@ cec find 'slider "Volume"'               elements matching a selector
 cec do 'click Export; set Volume to 70'  plain commands, planned offline
 cec run 'export this as a PDF'           open-ended goal, planned by a language model
 cec intent '{"action":"click","target":"button \"Export\""}'
-cec daemon                               keep perception warm; serve a Unix socket
+cec daemon                               keep perception warm; serve a socket or named pipe
 cec send '{"op":"status"}'
 cec render trace.json -o trace.svg
 ```
@@ -92,15 +137,51 @@ cec render trace.json -o trace.svg
 
 `cec run` talks to an OpenAI-compatible server. Point it wherever the model is:
 
-```
+```bash
 export CEC_LLM_BASE_URL=http://127.0.0.1:8080/v1
 export CEC_LLM_API_KEY=...          # optional; OPENAI_API_KEY is also read
 export CEC_LLM_MODEL=...
 ```
 
+In PowerShell, set the same variables using `$env:`:
+
+```powershell
+$env:CEC_LLM_BASE_URL = 'http://127.0.0.1:8080/v1'
+$env:CEC_LLM_MODEL = 'your-model-name'
+# Set CEC_LLM_API_KEY or OPENAI_API_KEY if your server requires authentication.
+.\.venv\Scripts\cec.exe run 'export this as a PDF'
+```
+
 The model is shown the same text listing as `cec look` and answers with intents as JSON. It is asked for element names, and the controller finds them.
 
-`cec daemon` keeps the accessibility tree warm between requests. The socket is mode 0600, under `$XDG_RUNTIME_DIR` or `/tmp/embodied-cursor-<uid>/`. One request moves the pointer at a time.
+### Daemon and persistence
+
+`cec daemon` keeps perception running between requests. One request moves the
+pointer at a time; other requests wait their turn. Status, observation, intent,
+goal, cancellation, event streaming and shutdown operations use the same request
+vocabulary on both platforms.
+
+| Platform | Default endpoint | Encoding | Spatial memory |
+|---|---|---|---|
+| Linux | `$XDG_RUNTIME_DIR/embodied-cursor.sock`, or `/tmp/embodied-cursor-<uid>/embodied-cursor.sock` | Newline-delimited UTF-8 JSON; socket mode `0600` | `$XDG_STATE_HOME/embodied-cursor/memory.json`, or `~/.local/state/embodied-cursor/memory.json` |
+| Windows | `\\.\pipe\embodied-cursor-<user-hash>` | UTF-8 JSON byte messages; Windows default pipe DACL | `%LOCALAPPDATA%\embodied-cursor\memory.json` |
+
+`--socket` overrides the endpoint for both `daemon` and `send`. On Windows, use
+a full pipe name such as `\\.\pipe\your-name`. `--no-memory` disables reading and
+writing spatial memory for a live session.
+
+For Windows, start the daemon in one PowerShell window:
+
+```powershell
+.\.venv\Scripts\cec.exe daemon
+```
+
+Then query it from another window in the repository. The Python client avoids
+differences in JSON argument quoting between PowerShell versions:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from embodied_cursor.daemon import request; print(request({'op': 'status'}))"
+```
 
 While a skill is running, a person moving the mouse aborts it. The outcome is `human_override`, and the click is not delivered.
 
@@ -115,7 +196,7 @@ src/embodied_cursor/
   brain/        text observation, the planner protocol, heuristic and LLM planners, the agent
   backends/     simulator, Linux X11/XTEST + AT-SPI, Windows Win32 + UI Automation
   cli.py        cec
-  daemon.py     the local socket
+  daemon.py     the local daemon and platform-specific transport
   render.py     an SVG of a recorded trace
 examples/playground_gtk.py
 ```
@@ -124,12 +205,32 @@ The design of each piece is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Tests
 
-```
-python3 -m pytest -q -m "not desktop"          # simulator; no display
-python3 -m pytest -q tests/test_live_desktop.py  # a real X11 session, GTK 3, AT-SPI
+The suite without desktop tests exercises the simulator, controller, planners,
+Windows input event construction and ABI layout, and the native daemon transport
+for the current operating system. No display is required:
+
+```bash
+python -m pytest -q -m "not desktop"
 ```
 
-The live tests drive the actual pointer. Leave the mouse alone while they run. They launch `examples/playground_gtk.py` themselves.
+Use the virtual environment's Python; on Windows the equivalent is
+`.\.venv\Scripts\python.exe -m pytest -q -m "not desktop"`.
+
+**Live desktop tests move the real pointer.** Leave the mouse alone while they
+run. Run the tests for your operating system:
+
+| Platform | Command | What it checks |
+|---|---|---|
+| Windows | `.\.venv\Scripts\python.exe -m pytest -q tests/test_windows_desktop.py` | Creates native Win32 controls and checks UI Automation discovery, pointer movement, checkbox clicking and Unicode text entry. |
+| Linux | `python -m pytest -q tests/test_live_desktop.py` | Launches `examples/playground_gtk.py` and checks real X11/XTEST input with GTK 3 and AT-SPI. |
+
+The portable tests do not establish that native desktop control works on a
+particular machine. Desktop tests require that platform's interactive session
+and dependencies; tests for other platforms are skipped.
+
+[GitHub Actions](.github/workflows/tests.yml) is configured to run the suite
+without desktop tests and all four simulation demos on Ubuntu and Windows with
+Python 3.10 and 3.12, plus the native Windows desktop smoke test on Windows runners.
 
 ## Limits
 
@@ -138,7 +239,7 @@ These are the edges of what this tree does today.
 - The Linux live backend requires an X11 display. A Wayland session works only through XWayland, and the pointer moved is the X pointer. Windows uses its native Win32/UI Automation backend. macOS is not implemented.
 - The Linux actuator is XTEST: motion, buttons, keys and the wheel. That protocol has no pressure axis, and this program does not open `/dev/uinput`.
 - The controller is arithmetic in this process. It does not need a GPU. A language model, if you configure one, is a separate HTTP server. The tests of that path use a local stub; no model is shipped or called from here.
-- Perception reads the window stack and the AT-SPI tree. An application that does not expose itself there is a titled rectangle. Chromium puts its page into the accessibility tree when started with `--force-renderer-accessibility`. There is no Chrome DevTools client.
+- Perception reads the window stack and AT-SPI on Linux, and UI Automation on Windows. Controls must be exposed through the platform's accessibility API. On Linux, an application without an accessible tree falls back to a titled window rectangle. Chromium can expose its page to accessibility tools when started with `--force-renderer-accessibility`. There is no screenshot fallback or Chrome DevTools client.
 - A target that leaves in the instant the button goes down is reported as `target_moved_away`. The planner can retry. The press itself cannot be taken back.
 - Scrubbing a control servos on the value the control reports. In the simulator, sixteen controls (linear, reversed, quadratic, cubic, square-root, and integer steps) at perception delays of 0, 30, 60 and 120 ms all finished on the requested value, and none ran more than one unit past it. On the GTK playground here, the volume slider landed on 73 and on 12 with the same bound. The drag stops short and then homes on readings taken at rest, so it takes a few seconds. If the final reading is still wrong, the outcome is `value_mismatch` rather than a false success.
 
