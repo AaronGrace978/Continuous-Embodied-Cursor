@@ -1,0 +1,90 @@
+{
+  "name": "continuous-cursor-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Native desktop control with Ollama Cloud and an always-visible activity indicator",
+  "author": "Continuous Embodied Cursor contributors",
+  "license": "AGPL-3.0-or-later",
+  "main": "main.cjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:e2e": "node test/e2e.cjs",
+    "test:electron": "node test/electron.cjs",
+    "package": "electron-builder --dir --publish never",
+    "dist": "electron-builder --publish never",
+    "icons": "node scripts/icons.cjs",
+    "test:appimage": "node test/appimage.cjs"
+  },
+  "devDependencies": {
+    "electron": "45.3.0",
+    "electron-builder": "26.18.0",
+    "playwright": "1.65.0"
+  },
+  "build": {
+    "appId": "org.embodiedcursor.desktop",
+    "productName": "Continuous Cursor",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "lib/**/*",
+      "renderer/**/*",
+      "package.json",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../src/embodied_cursor",
+        "to": "python/embodied_cursor",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE-AGPL.txt"
+      },
+      {
+        "from": "README.md",
+        "to": "DESKTOP-GUIDE.md"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "icon": "assets/icon.png",
+      "syncDesktopName": true
+    }
+  },
+  "overrides": {
+    "minimatch@>=7.0.0 <11.0.1": "11.0.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AaronGrace978/Continuous-Embodied-Cursor.git",
+    "directory": "ui"
+  },
+  "desktopName": "continuous-cursor.desktop"
+}

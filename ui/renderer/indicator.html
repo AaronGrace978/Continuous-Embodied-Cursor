@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'"
+    />
+    <title>Cursor activity</title>
+    <link rel="stylesheet" href="indicator.css" />
+  </head>
+  <body>
+    <div class="indicator" id="indicator">
+      <span class="dot" id="dot"></span
+      ><button id="openApp">
+        <strong id="phase">Connected · idle</strong
+        ><span id="detail">Continuous Cursor</span></button
+      ><button id="stop" aria-label="Stop cursor">■ Stop</button>
+    </div>
+    <script src="indicator.js"></script>
+  </body>
+</html>

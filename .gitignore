@@ -6,3 +6,8 @@ build/
 dist/
 .venv/
 /out/
+
+# Electron desktop application
+ui/node_modules/
+ui/release/
+ui/test-results/

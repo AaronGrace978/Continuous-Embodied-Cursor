@@ -70,6 +70,38 @@ cec do 'open File > Export as > PDF document; set Volume to 30'
 Choose names that appear in your own `cec look` output. The examples depend on
 the application exposing those menus and controls.
 
+## Electron desktop app
+
+A desktop UI is available in [`ui/`](ui/README.md), with the same Windows and
+Linux backends. It includes Ollama Cloud and local Ollama connections, an offline
+playground, an animated accessibility map, task history and trace export.
+
+![CEC motion-control console](docs/desktop-ui.png)
+
+After the Python setup above, install Node.js 22.12+ and run:
+
+```text
+cd ui
+npm ci
+npm start
+```
+
+Open **Settings** to add your [Ollama Cloud API key](https://ollama.com/settings/keys),
+choose a model and test the connection. Cloud connects directly to `ollama.com`;
+no local Ollama server is required. Your goal and visible control text are sent
+to the model; screenshots are not. API keys use OS-backed encryption where
+available, with a session-only fallback rather than plaintext persistence.
+
+A floating indicator stays above other windows during live sessions and clearly
+separates **Connected · idle**, **Planning**, **Cursor active** and **Stopping**.
+Stop from the indicator, the main window, the tray, or **Ctrl+Alt+Esc**. The app
+connects and moves the real pointer only when you explicitly choose a live
+session and run a task. **Try the playground** exercises the simulator instead.
+
+See the [desktop app guide](ui/README.md) for controls, credentials, tests,
+Python runtime selection and Windows/Linux packaging. Packaged apps include the
+Python source but require a Python installation; Windows also needs `comtypes`.
+
 ## Native Windows backend
 
 The Windows backend adds:

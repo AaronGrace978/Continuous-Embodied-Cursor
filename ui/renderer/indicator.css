@@ -1,0 +1,90 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+@import url("fonts.css");
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: #151b20;
+  color: #e1e8eb;
+  font-family: "IBM Plex Mono", monospace;
+}
+.indicator {
+  height: 74px;
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid #52646f;
+  border-left: 3px solid #ff6a3d;
+  -webkit-app-region: drag;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  background: #93bed2;
+  flex: none;
+}
+.dot.active {
+  background: #ff6a3d;
+  animation: pulse 1s infinite;
+}
+.dot.stopping {
+  background: #ffa091;
+}
+button {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  border: 0;
+  font: inherit;
+}
+#openApp {
+  padding: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  min-width: 0;
+  flex: 1;
+}
+strong {
+  font-size: 10px;
+  font-weight: 400;
+  display: block;
+  text-transform: uppercase;
+}
+#detail {
+  display: block;
+  margin-top: 7px;
+  font-size: 8px;
+  color: #7192a4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 190px;
+}
+#stop {
+  border: 1px solid #ff9b71;
+  background: #ff6a3d;
+  color: #151b20;
+  padding: 9px 10px;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+#stop:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+button:focus-visible {
+  outline: 2px solid #9cddf6;
+  outline-offset: 4px;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none !important;
+  }
+}

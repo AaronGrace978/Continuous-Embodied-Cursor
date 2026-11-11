@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>CEC / Control room</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <a
+        class="brand"
+        href="#workspace"
+        aria-label="Continuous Embodied Cursor home"
+        ><span class="brand-icon">↗</span
+        ><strong>CEC<span class="brand-period"></span></strong
+        ><span class="brand-wordmark">CONTINUOUS<br />EMBODIED CURSOR</span></a
+      >
+      <nav aria-label="Main navigation">
+        <button class="nav-item selected" id="workspaceNav">
+          <span class="nav-index">01</span> CONTROL ROOM</button
+        ><button class="nav-item" id="historyNav">
+          <span class="nav-index">02</span> RUN LOG
+          <span class="nav-count" id="historyCount">0</span></button
+        ><button class="nav-item" id="settingsNav">
+          <span class="nav-index">03</span> CONFIG
+        </button>
+      </nav>
+      <div class="topbar-right">
+        <span id="statusBadge" class="status-badge" role="status"
+          ><span class="status-dot"></span
+          ><span id="statusLabel">Disconnected</span></span
+        ><button
+          class="icon-button"
+          id="topSettings"
+          aria-label="Open settings"
+        >
+          ⚙
+        </button>
+      </div>
+    </header>
+    <div class="system-line">
+      <span><i></i> HUMAN INTENT <b>→</b> MACHINE MOTION</span
+      ><span>120 HZ MOTOR <b>/</b> NATIVE DESKTOP <b>/</b> v0.2</span>
+    </div>
+    <main>
+      <section class="workspace" id="workspaceView">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow" id="pageTitle">
+              THE CONTROL ROOM / SYSTEM OVERVIEW
+            </p>
+            <h1>INTENT. <span>MEET MOTION.</span></h1>
+          </div>
+          <div class="heading-note">
+            <span class="signal-bars"><i></i><i></i><i></i><i></i></span> HUMAN
+            IN THE LOOP.<br />ALWAYS.
+          </div>
+        </div>
+        <div class="dashboard-grid">
+          <section class="map-card">
+            <div class="card-heading">
+              <div>
+                <span class="panel-number">01 /</span>
+                <h2>MOTION FIELD</h2>
+                <span class="subtle-tag" id="mapTag">NO CONNECTION</span>
+              </div>
+              <span class="map-meta">STRUCTURED SPACE · NO PIXELS</span>
+            </div>
+            <div class="desktop-map" id="desktopMap">
+              <svg
+                id="mapSvg"
+                viewBox="0 0 1000 640"
+                role="img"
+                aria-label="Schematic view of accessible desktop controls"
+              ></svg>
+              <div class="map-empty" id="mapEmpty">
+                <div class="field-coordinate top-left">X: —<br />Y: —</div>
+                <div class="field-coordinate top-right">
+                  CEC / ENGINE OFFLINE<br />AWAITING INPUT_
+                </div>
+                <div class="field-copy">
+                  <span class="field-kicker"
+                    >A STEADY HAND. A DIFFERENT MIND.</span
+                  >
+                  <h3>THE NEXT<br />MOVE IS<br /><em>YOURS.</em></h3>
+                  <p>You call it. Your cursor carries it out.</p>
+                  <button
+                    class="text-button playground-button"
+                    id="trySimulation"
+                  >
+                    ENTER THE PLAYGROUND <span>→</span>
+                  </button>
+                </div>
+                <svg
+                  class="kinetic-art"
+                  id="kineticArt"
+                  viewBox="0 0 500 430"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <pattern
+                      id="artGrid"
+                      width="32"
+                      height="32"
+                      patternUnits="userSpaceOnUse"
+                    >
+                      <path
+                        d="M32 0H0V32"
+                        fill="none"
+                        stroke="#243039"
+                        stroke-width=".7"
+                      />
+                    </pattern>
+                    <linearGradient
+                      id="cursorGradient"
+                      x1="0"
+                      y1="0"
+                      x2="1"
+                      y2="1"
+                    >
+                      <stop offset="0" stop-color="#ff8760" />
+                      <stop offset="1" stop-color="#ff4d24" />
+                    </linearGradient>
+                  </defs>
+                  <circle
+                    cx="250"
+                    cy="220"
+                    r="157"
+                    fill="url(#artGrid)"
+                    stroke="#33404a"
+                    stroke-dasharray="2 9"
+                  />
+                  <circle
+                    class="orbital-ring"
+                    cx="250"
+                    cy="220"
+                    r="115"
+                    fill="none"
+                    stroke="#52616c"
+                    stroke-dasharray="120 600"
+                  />
+                  <path
+                    d="M35 356C129 370 94 210 204 257S372 344 426 102"
+                    fill="none"
+                    stroke="#6bdbfa"
+                    stroke-opacity=".4"
+                    stroke-width="1.5"
+                  />
+                  <path
+                    class="motion-line"
+                    d="M35 356C129 370 94 210 204 257S372 344 426 102"
+                    fill="none"
+                    stroke="#8ce6ff"
+                    stroke-width="2.5"
+                    stroke-dasharray="9 500"
+                  />
+                  <path
+                    d="M250 36V53M250 387V404M66 220H83M417 220H434"
+                    stroke="#61717d"
+                  />
+                  <path
+                    d="m183 105 30 205 47-65 88 12-165-152Z"
+                    fill="#090b0d"
+                    stroke="#ff7145"
+                    stroke-width="2"
+                    transform="translate(13 15)"
+                    opacity=".35"
+                  />
+                  <path
+                    d="m183 105 30 205 47-65 88 12-165-152Z"
+                    fill="url(#cursorGradient)"
+                    stroke="#ffa07a"
+                    stroke-width="1"
+                  />
+                  <path
+                    d="m202 144 20 120 30-38 49 15-99-97Z"
+                    fill="#10151a"
+                    opacity=".9"
+                  />
+                  <circle cx="426" cy="102" r="5" fill="#9deaff" />
+                  <circle cx="35" cy="356" r="3" fill="#ff7448" />
+                  <g fill="#697e8e" font-family="monospace" font-size="9">
+                    <text x="302" y="74">MOTION / MINIMUM JERK</text>
+                    <text x="281" y="379">CONTROL WITH INTENT</text>
+                  </g>
+                </svg>
+                <div class="field-baseline">
+                  <span>NO INPUT UNTIL YOU RUN A TASK</span><span>↗</span>
+                </div>
+              </div>
+            </div>
+            <div class="map-footer">
+              <span
+                ><span class="map-key"></span> ACCESSIBILITY DATA / NOT A
+                SCREENSHOT</span
+              ><span id="pointerPosition">X — &nbsp; Y —</span>
+            </div>
+          </section>
+          <section class="session-card">
+            <div class="card-heading">
+              <div>
+                <span class="panel-number">02 /</span>
+                <h2>TELEMETRY</h2>
+              </div>
+              <span class="session-icon">↗</span>
+            </div>
+            <div class="session-status">
+              <span id="sessionOrb" class="session-orb">↗</span>
+              <div>
+                <span class="status-caption">ENGINE STATE</span>
+                <h3 id="sessionTitle">STANDBY</h3>
+              </div>
+            </div>
+            <p id="sessionDescription">Connect a desktop. Take the controls.</p>
+            <dl class="session-stats">
+              <div>
+                <dt>ENVIRONMENT</dt>
+                <dd id="environmentValue">Not connected</dd>
+              </div>
+              <div>
+                <dt>VISIBLE CONTROLS</dt>
+                <dd id="elementCount">—</dd>
+              </div>
+              <div>
+                <dt>PERCEPTION</dt>
+                <dd id="perceptionValue">—</dd>
+              </div>
+              <div>
+                <dt>ELAPSED</dt>
+                <dd id="taskTime">—</dd>
+              </div>
+            </dl>
+            <button class="model-card" id="modelButton">
+              <span class="model-mark">✳</span
+              ><span
+                ><span class="model-caption" id="providerName"
+                  >Ollama Cloud</span
+                ><strong id="modelName">gpt-oss:120b</strong></span
+              ><span class="model-edit">↗</span></button
+            ><button class="button connect-button" id="connectButton">
+              Connect desktop <span>↗</span>
+            </button>
+          </section>
+        </div>
+        <section class="command-card" aria-label="Cursor command">
+          <div class="command-top">
+            <label for="goal"
+              ><span class="panel-number">03 /</span> COMMAND INPUT</label
+            >
+            <div class="mode-switch" role="group" aria-label="Desktop mode">
+              <button
+                id="liveMode"
+                class="mode-option selected"
+                aria-pressed="true"
+              >
+                ▣ Live desktop</button
+              ><button
+                id="simulationMode"
+                class="mode-option"
+                aria-pressed="false"
+              >
+                ◈ Simulation
+              </button>
+            </div>
+          </div>
+          <div class="command-entry">
+            <span class="command-prompt">&gt;_</span
+            ><textarea
+              id="goal"
+              maxlength="4000"
+              rows="1"
+              placeholder="Tell it what to do. Be specific."
+              aria-describedby="goalHint"
+            ></textarea
+            ><button class="button primary" id="runButton" disabled>
+              Run task <span>↗</span>
+            </button>
+          </div>
+          <div class="command-bottom">
+            <div class="example-list">
+              <span>QUICK START</span
+              ><button data-goal="click Export">
+                CLICK EXPORT <span>↗</span></button
+              ><button data-goal="set Volume to 70">
+                VOLUME → 70 <span>↗</span></button
+              ><button data-goal="fill Notes with hello world">
+                WRITE A NOTE <span>↗</span>
+              </button>
+            </div>
+            <span class="enter-hint">CTRL + ENTER TO RUN</span>
+          </div>
+          <div class="command-hint" id="goalHint">
+            Connect your desktop, or enter the playground.
+          </div>
+        </section>
+        <section class="activity-card">
+          <div class="card-heading">
+            <div>
+              <span class="panel-number">04 /</span>
+              <h2>EVENT STREAM</h2>
+              <span class="activity-count" id="activityCount">0</span>
+            </div>
+            <div class="activity-actions">
+              <button id="clearActivity" class="text-button">CLEAR</button
+              ><button id="exportTrace" class="text-button" disabled>
+                EXPORT TRACE ↗
+              </button>
+            </div>
+          </div>
+          <div id="activityFeed" class="activity-feed" aria-live="polite">
+            <div class="activity-empty">
+              <span>_</span> NO SIGNAL YET. YOUR NEXT MOVE STARTS HERE.
+            </div>
+          </div>
+        </section>
+        <footer class="workspace-footer">
+          <button class="help-link" id="guideButton">
+            OPERATOR MANUAL <span>↗</span></button
+          ><span>MOVE THE MOUSE TO INTERRUPT AN ACTION.</span
+          ><span id="shortcutText"
+            ><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Esc</kbd> TO STOP</span
+          >
+        </footer>
+      </section>
+      <section id="historyView" class="workspace" hidden>
+        <div class="history-heading">
+          <p class="eyebrow">SESSION MEMORY / HUMAN INTENT</p>
+          <h1>THE RUN LOG.</h1>
+          <p class="intro">Tasks from this session. Nothing saved to disk.</p>
+        </div>
+        <div id="historyList" class="history-list">
+          <div class="history-empty">NO RUNS RECORDED.</div>
+        </div>
+      </section>
+      <div class="stop-dock" id="stopDock" hidden>
+        <span class="status-dot"></span
+        ><span id="activeDescription">CURSOR ACTIVE</span
+        ><button id="stopButton">■ STOP</button>
+      </div>
+    </main>
+    <dialog id="settingsDialog" aria-labelledby="settingsTitle">
+      <form id="settingsForm">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">MODEL / CONNECTION / RUNTIME</p>
+            <h2 id="settingsTitle">CONFIGURE THE ENGINE.</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            id="closeSettings"
+            aria-label="Close settings"
+          >
+            ×
+          </button>
+        </div>
+        <p class="dialog-intro">
+          Ollama handles the thinking. The motor handles the motion.
+        </p>
+        <label for="provider">Planner</label
+        ><select id="provider">
+          <option value="ollama-cloud">Ollama Cloud</option>
+          <option value="ollama-local">Local Ollama</option>
+          <option value="offline">Offline commands · no model</option>
+        </select>
+        <div id="cloudFields">
+          <div class="field-heading">
+            <label for="apiKey">API key</label
+            ><button type="button" class="text-button" id="getKey">
+              Get a key ↗
+            </button>
+          </div>
+          <input
+            id="apiKey"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Enter your Ollama API key"
+          />
+          <div class="field-note" id="keyStatus">
+            Your key stays in the main app process and is encrypted when OS
+            storage is available.
+          </div>
+          <button type="button" class="text-button" id="removeKey">
+            Remove saved key
+          </button>
+          <p class="data-note">
+            Ollama Cloud receives your goal and visible control text. No
+            screenshots are sent.
+          </p>
+        </div>
+        <div id="localFields" hidden>
+          <label for="localUrl">Local endpoint</label
+          ><input id="localUrl" type="url" value="http://127.0.0.1:11434" />
+        </div>
+        <div id="modelFields">
+          <div class="field-heading">
+            <label for="model">Model</label
+            ><button type="button" class="text-button" id="refreshModels">
+              ↻ Load models
+            </button>
+          </div>
+          <input
+            id="model"
+            list="modelOptions"
+            placeholder="e.g. gpt-oss:120b"
+            autocomplete="off"
+          /><datalist id="modelOptions"></datalist
+          ><button
+            type="button"
+            class="button secondary test-connection"
+            id="testConnection"
+          >
+            Test connection ↗
+          </button>
+          <p class="field-note" id="connectionResult" role="status">
+            A connection test sends a small prompt to your selected model.
+          </p>
+        </div>
+        <div class="preferences">
+          <label class="checkbox-label"
+            ><input id="indicatorPreference" type="checkbox" checked /><span
+              >Keep an activity indicator above other windows</span
+            ></label
+          ><label class="checkbox-label"
+            ><input id="minimizePreference" type="checkbox" checked /><span
+              >Minimize the app while working on a live desktop</span
+            ></label
+          >
+        </div>
+        <details>
+          <summary>Runtime</summary>
+          <label for="pythonPath">Python executable (optional)</label
+          ><input
+            id="pythonPath"
+            type="text"
+            placeholder="Auto-detect Python 3.10+"
+            spellcheck="false"
+          />
+          <p class="field-note">
+            Choose a Python environment with the Windows extra installed for
+            native Windows control. Changing this disconnects the desktop.
+          </p>
+        </details>
+        <div class="dialog-footer">
+          <span id="saveStatus" role="status"></span
+          ><button type="submit" class="button primary">
+            Save changes <span>↗</span>
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <div class="toast" id="toast" role="alert" hidden></div>
+    <script src="icons.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
