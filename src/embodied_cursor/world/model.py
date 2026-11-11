@@ -23,7 +23,7 @@ from typing import Callable, Iterable, Sequence
 
 from ..geometry import ZERO, Rect, Vec2, visible_parts
 from .element import SURFACE_ROLES, Role, State, UIElement
-from .selector import Selector, name_score, normalise_name
+from .selector import Selector, name_score, normalise_name, roles_matching
 
 
 _NON_CLIPPING = frozenset({Role.MENU, Role.MENU_ITEM, Role.MENU_BAR, Role.COMBO_BOX})
@@ -283,6 +283,7 @@ class WorldModel:
                 if not scope:
                     return []
 
+            roles = roles_matching(sel.role) if sel.role is not None else None
             matches: list[Match] = []
             for tr in self._items.values():
                 el = tr.element
@@ -290,7 +291,7 @@ class WorldModel:
                     continue
                 if sel.id is not None and el.id != sel.id:
                     continue
-                if sel.role is not None and el.role != sel.role:
+                if roles is not None and el.role not in roles:
                     continue
                 if sel.app is not None and normalise_name(sel.app) not in normalise_name(el.app):
                     continue
@@ -312,7 +313,7 @@ class WorldModel:
             def rank(m: Match) -> tuple:
                 el = m.element
                 dist = el.bounds.distance_to(near) if near is not None else 0.0
-                return (-m.score, not el.enabled, -el.layer, dist, el.bounds.y, el.bounds.x)
+                return (-m.score, el.role != sel.role, not el.enabled, -el.layer, dist, el.bounds.y, el.bounds.x)
 
             matches.sort(key=rank)
             return matches

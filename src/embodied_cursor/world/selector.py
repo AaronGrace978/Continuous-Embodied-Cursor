@@ -40,6 +40,23 @@ _ROLE_ALIASES = {
 }
 
 
+_ROLE_KIN = {
+    "button": frozenset({"button", "toggle"}),
+    "menu_item": frozenset({"menu_item", "menu"}),
+    "menu": frozenset({"menu", "menu_item"}),
+}
+
+
+def roles_matching(role: str) -> frozenset[str]:
+    """Roles an element may have and still answer to ``role``.
+
+    Toolkits draw these lines differently from people: an entry that opens a
+    submenu is a "menu" to the accessibility tree and a "menu item" to
+    whoever is describing it, and a toggle button is still a button.
+    """
+    return _ROLE_KIN.get(role) or frozenset({role})
+
+
 def canonical_role(role: str) -> str:
     r = role.strip().lower().replace(" ", "_").replace("-", "_")
     return _ROLE_ALIASES.get(r, r)
