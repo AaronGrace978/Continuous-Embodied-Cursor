@@ -50,6 +50,9 @@ class MotorConfig:
     predict_horizon: float = 0.12
     """How far ahead, in seconds, a moving target's velocity is extrapolated."""
 
+    acc_memory: float = 0.3
+    """Plans longer than this many seconds progressively forget the current acceleration."""
+
     route_margin: float = 10.0
     """Clearance in pixels kept from obstacles."""
 
@@ -192,7 +195,21 @@ class MotionController:
                 D = max(D, remaining)
         else:
             D = remaining
+        if not via and length > 1e-6:
+            # Already closing on the goal faster than the plan allows for: a
+            # longer duration would carry the cursor past it and back. A
+            # smooth brake from speed v over distance d takes 2d/v.
+            closing = (self.vel - goal.vel).dot(goal.pos - self.pos) / length
+            if closing > 0.0:
+                D = min(D, 2.0 * length / closing)
         D = max(D, cfg.tau_min, kinematic_floor(length, cfg.v_max, cfg.a_max))
+
+        # Carrying the current acceleration into a long, slow plan makes the
+        # minimum-jerk solution unwind it over the whole duration, which shows
+        # up as a visible swing the wrong way. Over long horizons it is let go
+        # instead; position and velocity stay continuous regardless.
+        if D > cfg.acc_memory:
+            self.acc = self.acc * (cfg.acc_memory / D) ** 2
 
         lead = min(D, cfg.predict_horizon)
         aim = goal.pos + goal.vel * lead

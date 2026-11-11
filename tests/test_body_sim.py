@@ -297,7 +297,10 @@ def test_slow_scrub_takes_the_requested_time(desk):
     # It swept through the range rather than jumping.
     values = [e[3]["value"] for e in desk.events("value", "Timeline")]
     assert len(values) > 100
-    assert values == sorted(values)
+    # ...and in one direction, give or take a pixel when settling on the value.
+    pixel = 120 / 884
+    assert all(b > a - 1.5 * pixel for a, b in zip(values, values[1:]))
+    assert max(values) < 90 + 1.5 * pixel
 
 
 def test_scrub_follows_a_slider_that_moves_while_being_dragged(desk):
@@ -511,3 +514,45 @@ def test_reach_across_monitors_stays_on_the_desktop():
     for s in body.trace.samples:
         assert left.contains(s.pos) or right.contains(s.pos)
     assert body.world.monitor_at(btn.rect.center) == 1
+
+
+# -- regressions found while driving real controls ---------------------------
+
+
+@pytest.mark.parametrize(
+    "curve, inverse, start, want",
+    [
+        (lambda f: f * f, lambda f: f**0.5, 12, 64),
+        (lambda f: f**0.5, lambda f: f * f, 10, 80),
+        (lambda f: f**3, lambda f: f ** (1 / 3), 90, 5),
+    ],
+)
+def test_scrub_learns_a_curved_response_without_overshooting(desk, curve, inverse, start, want):
+    s = desk.win.add(Slider("Gain", Rect(380, 520, 620, 22), value=start, curve=curve, inverse=inverse))
+    body = make_body(desk)
+    out = do(body, action="scrub", target='slider "Gain"', value=want)
+    assert out.ok, out.describe()
+    assert out.duration < 2.5
+    # Past the first contact (a press on the track may move the handle), the
+    # value closes in on the goal and never passes it by more than a whisker.
+    grip = next(e["t"] for e in body.trace.events if e["kind"] == "gripped")
+    values = [e[3]["value"] for e in desk.events("value", "Gain") if e[0] > grip]
+    beyond = max((v - want) if want > start else (want - v) for v in values)
+    assert beyond < 1.5
+
+
+@pytest.mark.parametrize("when, where", [(0.22, (760, 560)), (0.25, (700, 585)), (0.30, (900, 480))])
+def test_a_target_that_jumps_closer_does_not_cause_a_fly_past(desk, when, where):
+    btn = desk.win.add(Button("Save", Rect(1300, 300, 90, 32)))
+    # Mid-flight, at full speed, the button lands right in front of the cursor.
+    desk.at(when, lambda: btn.move_to(*where))
+    body = make_body(desk)
+    out = do(body, action="click", target='button "Save"')
+    assert out.ok, out.describe()
+    assert btn.clicks == 1
+    centre = btn.rect.center
+    after = [s for s in body.trace.samples if s.t > when + 0.03]
+    assert after[0].vel.norm() > 1500
+    # It brakes onto the new position instead of sailing past and coming back.
+    assert max(s.pos.x for s in after) < centre.x + 20
+    assert max(s.pos.dist(centre) for s in after) <= after[0].pos.dist(centre) + 1.0

@@ -12,12 +12,14 @@ round-trip to the planner.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Generator, Sequence
 
 from .geometry import ZERO, Rect, Vec2
 from .intents import Click, Drag, Expect, Hover, Intent, Key, Move, Scroll, Scrub, Type, Wait
 from .motor.controller import MotionGoal
+from .motor.minjerk import s_curve
 from .runtime import BUTTONS
 from .world.element import SURFACE_ROLES, Role, UIElement
 from .world.memory import RevealStep
@@ -238,8 +240,13 @@ def reach(
     avoid: Sequence[Selector] = (),
     duration: float | None = None,
     reveal: bool = True,
+    allow: float = 0.0,
 ) -> Generator[None, None, Aim]:
-    """Fly the cursor onto ``target`` and hold it there until settled."""
+    """Fly the cursor onto ``target`` and hold it there until settled.
+
+    ``allow`` extends the time limit for targets that are meant to take a
+    while to get to, such as the end of a slow sweep.
+    """
     cfg = ctx.config
     started = ctx.now
     waiting_since: float | None = None
@@ -299,12 +306,15 @@ def reach(
             ctx.emit("acquired", after=round(ctx.now - waiting_since, 3))
             waiting_since = None
 
+        # A requested duration is a budget for the whole reach, so a target
+        # that keeps shifting does not restart the clock.
+        left = None if duration is None else started + duration - ctx.now
         ctx.goal = MotionGoal(
             aim.pos,
             aim.width,
             aim.vel,
             obstacles_for(ctx, aim.element, avoid),
-            duration,
+            left if left is not None and left > 0.0 else None,
         )
 
         if _arrived(ctx, aim):
@@ -315,7 +325,7 @@ def reach(
         else:
             on_since = None
 
-        if ctx.now - started > cfg.reach_timeout:
+        if ctx.now - started > cfg.reach_timeout + (duration or 0.0) + allow:
             raise SkillFailure("timeout", f"could not settle on the target within {cfg.reach_timeout:g}s")
         yield
 
@@ -565,6 +575,159 @@ def _fresh_value(ctx: "Context", ident: str, after: float) -> Generator[None, No
     return ctx.world.get(ident)
 
 
+class Response:
+    """What a draggable control has been seen to do: pointer offset -> value.
+
+    Every observation of the control during a drag adds a reading. From
+    those, :meth:`solve` answers "where must the pointer be for the control to
+    read *v*?" by interpolating between readings that bracket *v*, or by
+    extending the local slope a short way when nothing brackets it yet. No
+    shape is assumed beyond the response being monotonic, so linear, curved,
+    reversed and stepped controls are all handled by the same code.
+    """
+
+    def __init__(self, gain: float, span: float) -> None:
+        self.gain = gain
+        """Pixels of pointer travel per unit of value; the sign is the direction."""
+
+        self._eps = span * 1e-9
+        self._quantum = span * 1e-6
+        self._table: dict[int, tuple[float, float]] = {}
+        # Where each distinct value was first met. On a stepped control these
+        # are the step edges, which give its true pitch; single readings do not.
+        self._levels: dict[int, tuple[float, float]] = {}
+
+    def __len__(self) -> int:
+        return len(self._table)
+
+    def clear(self) -> None:
+        self._table.clear()
+        self._levels.clear()
+
+    def note(self, offset: float, value: float) -> None:
+        self._table[round(offset * 2.0)] = (offset, value)
+        self._levels.setdefault(round(value / self._quantum), (offset, value))
+
+    def solve(self, value: float, near_offset: float) -> float:
+        """Pointer offset at which the control should read ``value``."""
+        eps = self._eps
+        pts = sorted(self._table.values())
+        if not pts:
+            return near_offset
+        best: float | None = None
+        for (s0, v0), (s1, v1) in zip(pts, pts[1:]):
+            if min(v0, v1) - eps <= value <= max(v0, v1) + eps:
+                cand = (s0 + s1) / 2.0 if abs(v1 - v0) <= eps else s0 + (value - v0) / (v1 - v0) * (s1 - s0)
+                if best is None or abs(cand - near_offset) < abs(best - near_offset):
+                    best = cand
+        if best is not None:
+            return best
+
+        # Not bracketed yet: extend the local slope from the nearest reading,
+        # taking the one furthest along if several read the same (a stepped
+        # control reports one value across a whole stretch of track).
+        self._refit(pts)
+        closest = min(abs(p[1] - value) for p in pts)
+        ties = [p for p in pts if abs(p[1] - value) <= closest + eps]
+        forward = self.gain * (value - ties[0][1]) >= 0
+        anchor = max(ties) if forward else min(ties)
+        # While the response is still being discovered, do not aim far past
+        # what has been explored: commit further as the evidence grows.
+        lead = max(48.0, 0.75 * (pts[-1][0] - pts[0][0]))
+        step = self.gain * (value - anchor[1])
+        return anchor[0] + min(max(step, -lead), lead)
+
+    def _refit(self, pts: list[tuple[float, float]]) -> None:
+        """Update the slope estimate from the readings at the explored frontier."""
+        eps = self._eps
+        frontier = pts[-1] if self.gain >= 0 else pts[0]
+        if len(pts) >= 2 and abs(pts[-1][0] - pts[0][0]) >= 4.0:
+            # Which end is "ahead" depends on which way the drag has gone.
+            newest = max(self._levels.values(), key=lambda p: abs(p[0]))
+            frontier = min(pts, key=lambda p: abs(p[0] - newest[0]))
+        # Two estimates of pixels per unit of value around the frontier: a fit
+        # over the recent stretch, and the spacing of the last two value
+        # levels. The smaller one is used, because falling short costs a
+        # correction while overshooting sets a value nobody asked for.
+        slopes: list[float] = []
+        reach_back = max(24.0, 0.3 * (pts[-1][0] - pts[0][0]))
+        window = [p for p in pts if abs(p[0] - frontier[0]) <= reach_back]
+        if len(window) >= 3:
+            ms = sum(p[0] for p in window) / len(window)
+            mv = sum(p[1] for p in window) / len(window)
+            var = sum((p[1] - mv) ** 2 for p in window)
+            if var > eps * eps:
+                slopes.append(sum((p[0] - ms) * (p[1] - mv) for p in window) / var)
+        entry = self._levels.get(round(frontier[1] / self._quantum), frontier)
+        earlier = [p for p in self._levels.values() if abs(p[0] - entry[0]) >= 6.0 and abs(p[1] - entry[1]) > eps]
+        if earlier:
+            ref = min(earlier, key=lambda p: abs(p[0] - entry[0]))
+            slopes.append((ref[0] - entry[0]) / (ref[1] - entry[1]))
+        if not slopes:
+            return
+        agreeing = [k for k in slopes if k * self.gain > 0]
+        if agreeing:
+            self.gain *= min(max(min(agreeing, key=abs) / self.gain, 0.125), 8.0)
+        elif abs(pts[-1][0] - pts[0][0]) >= 4.0:
+            # Every measurement says the control runs the other way round.
+            self.gain = min(slopes, key=abs)
+
+
+class _Sweep:
+    """Aim point for a drag whose reported value follows a smooth reference.
+
+    The value, not the pointer, is what moves along a minimum-jerk profile
+    from where it is to where it should be. Each tick the pointer is sent to
+    wherever the control is expected to read the reference value, so the
+    value changes smoothly even when the control's response is curved.
+    """
+
+    selector = None
+
+    def __init__(
+        self,
+        ctx: "Context",
+        response: Response,
+        observe: Callable[["Context"], tuple[UIElement, float]],
+        point: Callable[[UIElement, float], Vec2],
+        limits: Callable[[UIElement], tuple[float, float]],
+        v_from: float,
+        v_to: float,
+        duration: float,
+        tolerance: float,
+    ) -> None:
+        self.response, self.observe, self.point, self.limits = response, observe, point, limits
+        self.v_from, self.v_to, self.duration, self.tolerance = v_from, v_to, max(duration, 1e-3), tolerance
+        self.started = ctx.now
+        self._last: tuple[float, Vec2] | None = None
+        self._vel = ZERO
+
+    def locate(self, ctx: "Context") -> Aim:
+        now, here = self.observe(ctx)
+        u = min((ctx.now - self.started) / self.duration, 1.0)
+        reference = self.v_from + (self.v_to - self.v_from) * s_curve(u)
+        low, high = self.limits(now)
+        goal = self.response.solve(reference, here)
+        if u >= 1.0 and abs(goal - here) < 1.0 and abs(self.v_to - (now.value or 0.0)) > self.tolerance:
+            goal = here + (1.0 if goal >= here else -1.0)
+        p = self.point(now, min(max(goal, low), high))
+
+        # Feed the aim point's own velocity forward so the cursor tracks it
+        # rather than trailing behind.
+        if self._last is not None and ctx.now > self._last[0] and u < 1.0:
+            raw = (p - self._last[1]) / (ctx.now - self._last[0])
+            self._vel = self._vel * 0.7 + raw * 0.3
+        elif u >= 1.0:
+            self._vel = ZERO
+        self._last = (ctx.now, p)
+
+        # Only the end of the sweep counts as arriving.
+        end = self.point(now, min(max(self.response.solve(self.v_to, here), low), high)) if u < 1.0 else p
+        # Loose while following the reference, tight for the landing.
+        width = 48.0 if u < 1.0 else 4.0
+        return Aim(p, width, Rect(end.x - 2.0, end.y - 2.0, 4.0, 4.0), self._vel if u < 1.0 else ZERO)
+
+
 def scrub(ctx: "Context", intent: Scrub) -> Skill:
     cfg = ctx.config
     target = ElementTarget(intent.target)
@@ -588,38 +751,69 @@ def scrub(ctx: "Context", intent: Scrub) -> Skill:
     pad = min(el.bounds.w, el.bounds.h) / 2.0
     travel = max(length - 2.0 * pad, 1.0)
 
-    # Pixels of pointer travel per unit of value. This first guess assumes a
-    # linear control whose low end is at the left or top; it is corrected
-    # from the control's actual response below.
-    gain = travel / span
+    # First guess: a linear control whose low end is at the left or top. It
+    # is corrected from the control's actual response as soon as there is one.
+    response = Response(travel / span, span)
 
-    if abs(want - start_value) <= min(tolerance, 0.5 / abs(gain)):
+    def close_enough(value: float) -> bool:
+        return abs(want - value) <= min(tolerance, 0.5 / abs(response.gain))
+
+    if close_enough(start_value):
         return {"value": start_value, "wanted": want, "started_at": start_value}
 
+    live = el
+    grab = ctx.pos
+    grab_bounds = el.bounds
+    recent: deque[tuple[float, float]] = deque(maxlen=64)
+    seen_stamp = 0.0
+
     def read() -> Generator[None, None, UIElement]:
-        live = yield from _fresh_value(ctx, ident, ctx.now)
-        if live is None or live.value is None:
+        fresh = yield from _fresh_value(ctx, ident, ctx.now)
+        if fresh is None or fresh.value is None:
             raise SkillFailure("not_found", "the control disappeared while being dragged")
-        return live
+        return fresh
+
+    def shift_of(bounds: Rect) -> Vec2:
+        """How far the control itself has moved since it was grabbed."""
+        return Vec2(bounds.x - grab_bounds.x, bounds.y - grab_bounds.y)
+
+    def offset_of(bounds: Rect) -> float:
+        return (ctx.pos - grab - shift_of(bounds)).dot(axis)
+
+    def point_at(now: UIElement, offset: float) -> Vec2:
+        return grab + shift_of(now.bounds) + axis * offset
+
+    def limits(now: UIElement) -> tuple[float, float]:
+        """Offsets beyond which the pointer would leave the control."""
+        origin = (grab + shift_of(now.bounds)).dot(axis)
+        low = (now.bounds.left if horizontal else now.bounds.top) - origin - pad
+        high = (now.bounds.right if horizontal else now.bounds.bottom) - origin + pad
+        return low, high
+
+    def observe(c: "Context") -> tuple[UIElement, float]:
+        """Record a fresh reading against where the pointer was when it was taken."""
+        nonlocal seen_stamp
+        now = c.world.get(ident) or live
+        here = offset_of(now.bounds)
+        recent.append((c.now, here))
+        stamp = c.world.last_seen(ident) or 0.0
+        if stamp > seen_stamp and now.value is not None:
+            seen_stamp = stamp
+            at = next((o for t, o in reversed(recent) if t <= stamp + 1e-9), recent[0][1])
+            response.note(at, now.value)
+        return now, here
 
     # -- take hold ---------------------------------------------------------
     # The accessibility tree gives the control's box, not where its handle
     # is. Along the track the handle is where the value says; across it, the
-    # box may include a label or readout. So feel for it: press, nudge, and
-    # if the value does not respond, let go and try a little off-centre.
-    live = el
-    grab = ctx.pos
-    grab_bounds = el.bounds
+    # box may include a label or readout. So feel for it: press, lean on it,
+    # and if the value does not respond, let go and try a little off-centre.
     engaged = False
     remembered = ctx.memory.grip(el) if ctx.memory is not None else None
-    # Quick nudges everywhere first; longer ones (which a stepped control
-    # needs before it clicks over) only once those have all come up empty.
-    attempts = [(c, (1.0,)) for c in cfg.scrub_cross[:3]]
-    attempts += [(c, (3.0, 9.0)) for c in cfg.scrub_cross[:3]]
-    attempts += [(c, (1.0, 3.0)) for c in cfg.scrub_cross[3:]]
+    crossings = list(cfg.scrub_cross)
     if remembered is not None:
-        attempts.insert(0, (remembered, (1.0, 3.0, 9.0)))
-    for cross, scales in attempts:
+        crossings = [remembered] + [c for c in crossings if c != remembered]
+    for cross in crossings:
 
         def handle(now: UIElement, cross: float = cross) -> tuple[float, float]:
             along = (pad + (now.value_fraction or 0.0) * travel) / length
@@ -637,30 +831,37 @@ def scrub(ctx: "Context", intent: Scrub) -> Skill:
         track_lo = (grab_bounds.left if horizontal else grab_bounds.top) + pad
         along = ((grab.x if horizontal else grab.y) - track_lo) / travel
         after = live.value_fraction or 0.0
-        if abs(live.value - before) > eps and abs(after - (1.0 - along)) < abs(after - along) - 0.1:  # type: ignore[operator]
+        jumped = abs(live.value - before) > eps  # type: ignore[operator]
+        if jumped and abs(after - (1.0 - along)) < abs(after - along) - 0.1:
             # The press landed on the track, not the handle, and the value
             # jumped to the mirror image of where we pressed: the control's
             # high end is at the left or top.
-            gain = -gain
+            response.gain = -abs(response.gain)
 
+        # Lean on it in the direction of the goal and watch for the first
+        # response. Long enough to click a stepped control over, but never
+        # further than the goal is thought to be.
         error = want - live.value  # type: ignore[operator]
-        toward = 1.0 if gain * error >= 0 else -1.0
-        s = 0.0
-        # Small nudges first; a stepped control needs a longer one to click over.
-        offsets = [toward * sign * cfg.scrub_probe * scale for scale in scales for sign in (1.0, -1.0)]
-        for offset in offsets:
-            ref_v = live.value
-            nudge = offset - s
-            s = offset
-            yield from reach(ctx, PointTarget(grab + axis * s, width=4.0))
-            live = yield from read()
-            dv = live.value - ref_v  # type: ignore[operator]
-            if abs(dv) > eps:
-                seen = nudge / dv
-                gain = seen if seen * gain < 0 else gain * (0.5 + 0.5 * min(max(seen / gain, 0.125), 8.0))
-                engaged = True
+        toward = 1.0 if response.gain * error >= 0 else -1.0
+        lean = min(cfg.scrub_probe * 9.0, max(abs(response.gain * error), cfg.scrub_probe))
+        ref_v = live.value
+        response.clear()
+        recent.clear()
+        seen_stamp = ctx.world.last_seen(ident) or 0.0
+        response.note(0.0, ref_v)  # type: ignore[arg-type]
+        responded = jumped
+        for _ in reach(ctx, PointTarget(grab + axis * (toward * lean), width=4.0), duration=0.12 + lean / 160.0):
+            now, _here = observe(ctx)
+            if now.value is not None and abs(now.value - ref_v) > eps:
+                # It moved: keep going, straight into the sweep below.
+                live, responded = now, True
                 break
-        if engaged or abs(live.value - before) > eps:  # type: ignore[operator]
+            yield
+        else:
+            live = yield from read()
+            response.note(offset_of(live.bounds), live.value)  # type: ignore[arg-type]
+            responded = responded or abs(live.value - ref_v) > eps  # type: ignore[operator]
+        if responded:
             engaged = True
             if ctx.memory is not None:
                 ctx.memory.note_grip(el, cross, ctx.world)
@@ -679,63 +880,46 @@ def scrub(ctx: "Context", intent: Scrub) -> Skill:
     # -- servo on the reported value -----------------------------------------
     try:
         swept = False
-        best = float("inf")
+        best_error = float("inf")
         stale = 0
         stuck = 0
         for _ in range(cfg.scrub_iterations):
-            error = want - live.value  # type: ignore[operator]
-            if abs(error) <= min(tolerance, 0.5 / abs(gain)):
+            if close_enough(live.value):  # type: ignore[arg-type]
                 break
-            if abs(error) < best - eps:
-                best, stale = abs(error), 0
+            error = abs(want - live.value)  # type: ignore[operator]
+            if error < best_error - eps:
+                best_error, stale = error, 0
             else:
                 stale += 1
                 if stale >= 4:
                     break
-            step = gain * error
-            if abs(step) < 0.5:
+
+            s_now = offset_of(live.bounds)
+            distance = abs(response.solve(want, s_now) - s_now)
+            if swept and distance < 0.5:
                 break
-            if abs(step) < 1.0:
-                step = 1.0 if step > 0 else -1.0
-
-            shift = Vec2(live.bounds.x - grab_bounds.x, live.bounds.y - grab_bounds.y)
-            s_now = (ctx.pos - grab - shift).dot(axis)
-            # Never chase a mis-estimated gain off the end of the control.
-            origin = (grab + shift).dot(axis)
-            low = (live.bounds.left if horizontal else live.bounds.top) - origin - pad
-            high = (live.bounds.right if horizontal else live.bounds.bottom) - origin + pad
-            s_next = min(max(s_now + step, low), high)
-
-            def dest(c: "Context", s_next: float = s_next) -> Vec2:
-                # Follow the control if it moves under the pointer mid-drag.
-                now = (c.world.get(ident) or el).bounds
-                return grab + Vec2(now.x - grab_bounds.x, now.y - grab_bounds.y) + axis * s_next
+            if intent.duration is not None and not swept:
+                duration = intent.duration
+            else:
+                # As long as a hand would take to cover the same ground, and
+                # a little longer: the feedback is only as fast as perception.
+                width = max(2.0 * abs(response.gain) * tolerance, 4.0)
+                duration = 1.3 * ctx.controller.config.fitts.movement_time(max(distance, abs(response.gain) * error), width)
 
             ref_v = live.value
-            yield from reach(
-                ctx,
-                PointTarget(dest, width=min(max(abs(s_next - s_now) / 2.0, 2.0), 12.0)),
-                duration=None if swept else intent.duration,
-            )
+            sweep = _Sweep(ctx, response, observe, point_at, limits, ref_v, want, duration, tolerance)  # type: ignore[arg-type]
+            yield from reach(ctx, sweep, allow=duration)
             swept = True
             live = yield from read()
-
-            shift = Vec2(live.bounds.x - grab_bounds.x, live.bounds.y - grab_bounds.y)
-            ds = (ctx.pos - grab - shift).dot(axis) - s_now
-            dv = live.value - ref_v  # type: ignore[operator]
-            if abs(ds) >= 1.0 and abs(dv) > eps:
-                seen = ds / dv
-                if seen * gain < 0:
-                    # The control runs the other way round; adopt that outright.
-                    gain = seen
-                else:
-                    gain *= 0.5 + 0.5 * min(max(seen / gain, 0.125), 8.0)
+            moved = offset_of(live.bounds) - s_now
+            response.note(offset_of(live.bounds), live.value)  # type: ignore[arg-type]
+            if abs(live.value - ref_v) > eps:  # type: ignore[operator]
                 stuck = 0
-            elif abs(ds) >= 8.0:
+            elif abs(moved) >= 8.0:
                 stuck += 1
                 if stuck >= 3:
                     break
-        ctx.emit("scrubbed", value=live.value, wanted=want, px_per_unit=round(gain, 4))
+        ctx.emit("scrubbed", value=live.value, wanted=want, px_per_unit=round(response.gain, 4), readings=len(response))
     finally:
         ctx.release(1)
 
