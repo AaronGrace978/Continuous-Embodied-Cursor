@@ -65,12 +65,31 @@ class BodyConfig:
     """Seconds after an action during which new elements are credited to it."""
 
     hover_reveal_dwell: float = 0.3
-    scrub_iterations: int = 24
+    scrub_iterations: int = 16
     scrub_probe: float = 6.0
     """Pixels of exploratory drag used to learn which way a control runs."""
 
     scrub_cross: tuple[float, ...] = (0.5, 0.75, 0.25, 0.9, 0.1)
     """Positions across a slider's thickness at which to feel for its handle."""
+
+    scrub_lag: float | None = None
+    """Delay, in seconds, between the pointer moving and a dragged control reporting it.
+
+    ``None`` measures it on each drag, from how long the control takes to
+    notice the first lean on it.
+    """
+
+    scrub_latency: float = 0.04
+    """Least delay to be prepared for: sweeps stop at least this much travel short."""
+
+    scrub_latency_max: float = 0.2
+    """Most delay a measurement is allowed to claim."""
+
+    scrub_quiet: float = 0.08
+    """A dragged control's reading is trusted once it has been unchanged this long at rest."""
+
+    scrub_confirm: float = 0.16
+    """How long a reading that would end the drag is held, so a late report can still contradict it."""
 
     scroll_rate: float = 25.0
     """Wheel notches per second."""

@@ -32,6 +32,17 @@ class Session:
     notes: list[str]
     """Human-readable remarks about anything that could not be set up."""
 
+    def settle(self, timeout: float = 3.0) -> bool:
+        """Wait until the whole desktop has been read at least once more."""
+        clock = self.body.clock
+        since = clock.now()
+        self.perception.request_snapshot()
+        while clock.now() - since < timeout:
+            if self.perception.fresh_since(since):
+                return True
+            clock.sleep_until(clock.now() + 0.01)
+        return False
+
     def close(self) -> None:
         try:
             self.body.close()

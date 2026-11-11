@@ -303,18 +303,26 @@ class AtspiSource:
 
             value = lo = hi = None
             if role in _VALUED:
-                iface = acc.get_value_iface()
-                if iface is not None:
-                    value = iface.get_current_value()
-                    lo = iface.get_minimum_value()
-                    hi = iface.get_maximum_value()
+                try:
+                    iface = acc.get_value_iface()
+                    if iface is not None:
+                        value = A.Value.get_current_value(iface)
+                        lo = A.Value.get_minimum_value(iface)
+                        hi = A.Value.get_maximum_value(iface)
+                except Exception:
+                    value = lo = hi = None
 
             text = None
             if role == Role.TEXT_FIELD and showing:
-                iface = acc.get_text_iface()
-                if iface is not None:
-                    n = iface.get_character_count()
-                    text = iface.get_text(0, min(n, 500)) if n > 0 else ""
+                try:
+                    iface = acc.get_text_iface()
+                    if iface is not None:
+                        n = A.Text.get_character_count(iface)
+                        # Called through the interface class: on the object
+                        # itself the name resolves to a deprecated accessor.
+                        text = A.Text.get_text(iface, 0, min(n, 500)) if n > 0 else ""
+                except Exception:
+                    text = None  # an unreadable field is still a field
 
             if not name and role in _NEEDS_LABEL:
                 name = self._label(acc)

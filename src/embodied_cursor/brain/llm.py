@@ -46,7 +46,7 @@ Intents:
 {"action":"drag","target":T,"to":T,"expect":E}        (or "offset":[dx,dy])
 {"action":"scrub","target":T,"value":N}               (or "fraction":0..1; optional "duration" seconds)
 {"action":"scroll","target":T,"direction":"down|up|left|right","until":T}   (or "notches":N)
-{"action":"type","text":"...","target":T,"enter":false}
+{"action":"type","text":"...","target":T,"enter":false,"clear":false}   (clear replaces what the field holds)
 {"action":"key","keys":"ctrl+s"}
 {"action":"wait","expect":E}
 

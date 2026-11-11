@@ -480,6 +480,17 @@ def test_type_into_a_field(desk):
     assert field.submitted == ["quarterly report"]
 
 
+def test_type_can_replace_what_a_field_holds(desk):
+    field = desk.win.add(TextField("Search", Rect(500, 200, 300, 30)))
+    body = make_body(desk)
+    assert do(body, action="type", target="Search", text="first draft").ok
+    out = do(body, action="type", target="Search", text="final", clear=True)
+    assert out.ok, out.describe()
+    assert field.text == "final"
+    # The outcome reports what the field reads afterwards, not what was sent.
+    assert out.observed["text"] == "final"
+
+
 def test_key_chord_presses_and_releases_in_order(desk):
     body = make_body(desk)
     out = do(body, action="key", keys="ctrl+shift+s")
@@ -532,7 +543,9 @@ def test_scrub_learns_a_curved_response_without_overshooting(desk, curve, invers
     body = make_body(desk)
     out = do(body, action="scrub", target='slider "Gain"', value=want)
     assert out.ok, out.describe()
-    assert out.duration < 2.5
+    # The drag stops short and then homes on readings taken at rest, so it
+    # takes longer than a single sweep. What it must not do is run past.
+    assert out.duration < 4.0
     # Past the first contact (a press on the track may move the handle), the
     # value closes in on the goal and never passes it by more than a whisker.
     grip = next(e["t"] for e in body.trace.events if e["kind"] == "gripped")

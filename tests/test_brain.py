@@ -120,6 +120,9 @@ def test_clause_parsing_covers_the_command_language():
         Type("hi there", Selector(name="Search"), True)
     ]
     assert parse_clause("type hello").build(obs) == [Type("hello", None, False)]
+    assert parse_clause('fill Search with "embodied cursor" and press enter').build(obs) == [
+        Type("embodied cursor", Selector(name="Search"), True, True)
+    ]
     with pytest.raises(Unparseable):
         parse_clause("make the report look nicer")
 

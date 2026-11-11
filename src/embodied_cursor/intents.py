@@ -290,6 +290,8 @@ class Type(Intent):
     text: str
     target: Selector | None = None
     enter: bool = False
+    clear: bool = False
+    """Select whatever the field already holds first, so the text replaces it."""
 
     def to_obj(self) -> dict[str, Any]:
         return _strip(
@@ -298,12 +300,13 @@ class Type(Intent):
                 "text": self.text,
                 "target": self.target.to_obj() if self.target else None,
                 "enter": True if self.enter else None,
+                "clear": True if self.clear else None,
             }
         )
 
     def describe(self) -> str:
         where = f" into {self.target.describe()}" if self.target else ""
-        return f"type {self.text!r}{where}"
+        return f"type {self.text!r}{where}" + (", replacing its contents" if self.clear else "")
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,7 +358,7 @@ _FIELDS: dict[str, set[str]] = {
     "drag": {"target", "to", "offset", "duration", "expect"},
     "scrub": {"target", "value", "fraction", "duration", "tolerance"},
     "scroll": {"target", "notches", "until", "direction"},
-    "type": {"text", "target", "enter"},
+    "type": {"text", "target", "enter", "clear"},
     "key": {"keys"},
     "wait": {"expect"},
 }
@@ -428,7 +431,12 @@ def intent_from_obj(obj: "dict[str, Any] | Intent") -> Intent:
     if action == "type":
         if not isinstance(obj.get("text"), str):
             raise ValueError("'type' needs 'text'")
-        return Type(obj["text"], sel("target", required=False), bool(obj.get("enter", False)))
+        return Type(
+            obj["text"],
+            sel("target", required=False),
+            bool(obj.get("enter", False)),
+            bool(obj.get("clear", False)),
+        )
     if action == "key":
         return Key(str(_need(obj, "keys")))
     if expect is None:

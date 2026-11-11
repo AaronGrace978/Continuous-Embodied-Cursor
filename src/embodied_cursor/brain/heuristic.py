@@ -209,6 +209,17 @@ def parse_clause(clause: str) -> _Step:
         return _Step(c, lambda obs: [Type(text, target, enter)])
 
     m = re.match(
+        rf"^(?:fill|replace)\s+(.+?)\s+with\s+({_QUOTED}|.+?)(\s+(?:and|then)\s+(?:press\s+|hit\s+)?(?:enter|return))?$",
+        c,
+        re.I,
+    )
+    if m:
+        target = parse_target(m.group(1))
+        text = _unquote(m.group(2))
+        enter = bool(m.group(3))
+        return _Step(c, lambda obs: [Type(text, target, enter, clear=True)])
+
+    m = re.match(
         r"^(?:set|slide|scrub|adjust|change|drag|move)\s+(.+?)\s+to\s+(-?\d+(?:\.\d+)?)\s*(%|percent)?"
         r"(?:\s+(slowly)|\s+(?:over|in)\s+(\d+(?:\.\d+)?)\s*s(?:ec(?:ond)?s?)?)?$",
         c,

@@ -146,7 +146,7 @@ def observe(world: WorldModel, pointer: Vec2, t: float = 0.0, limit: int = 120) 
     out_surfaces: list[dict[str, Any]] = []
     for sid, surface in sorted(surfaces.items(), key=lambda kv: -kv[1].layer):
         items = [el for _, el in by_surface.get(sid, []) if el.id in keep]
-        if not items and not surface.name:
+        if not items and (not surface.name or _duplicated(surface, surfaces, by_surface)):
             continue
         items.sort(key=lambda el: (round(el.bounds.top / 12), el.bounds.left))
         out_surfaces.append(
@@ -168,6 +168,21 @@ def observe(world: WorldModel, pointer: Vec2, t: float = 0.0, limit: int = 120) 
         closed=sorted(set(closed))[:60],
         truncated=truncated,
     )
+
+
+def _duplicated(surface: UIElement, surfaces: dict[str, UIElement], filled: dict[str, list]) -> bool:
+    """Is this bare window the same thing as another surface that has contents?
+
+    The window system and the accessibility tree each report a window; only
+    the latter has anything in it.
+    """
+    for sid, other in surfaces.items():
+        if sid == surface.id or not filled.get(sid):
+            continue
+        overlap = surface.bounds.intersection(other.bounds).area
+        if overlap > 0.0 and overlap >= 0.8 * max(surface.bounds.area, other.bounds.area):
+            return True
+    return False
 
 
 def _closed_path(world: WorldModel, el: UIElement) -> str:

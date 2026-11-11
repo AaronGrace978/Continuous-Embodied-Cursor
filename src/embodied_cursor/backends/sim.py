@@ -326,8 +326,14 @@ class TextField(Widget):
     def on_press(self, p: Vec2, button: int) -> None:
         self.desktop.focus = self
 
+    def select_all(self) -> None:
+        self._selected = True
+
     def on_text(self, text: str) -> None:
         for ch in text:
+            if getattr(self, "_selected", False) and ch != "\n":
+                self.text = ""
+            self._selected = False
             if ch == "\n":
                 self.submitted.append(self.text)
             elif ch == "\b":
@@ -765,8 +771,11 @@ class SimDesktop:
 
     def key(self, key: str, down: bool) -> None:
         self.keys.append((key, down))
+        held = {k.lower() for k, d in self.keys if d} - {k.lower() for k, d in self.keys if not d}
         if down and key in ("Return", "Enter") and self.focus is not None:
             self.focus.on_text("\n")
+        if down and key.lower() == "a" and held & {"ctrl", "control"} and isinstance(self.focus, TextField):
+            self.focus.select_all()
         if down and key == "Escape":
             self.close_menus()
 
