@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld(
     connect: (mode) => invoke("connect", mode),
     disconnect: () => invoke("disconnect"),
     run: (goal) => invoke("run", goal),
+    camera: () => invoke("camera"),
+    hand: (sample) => invoke("hand", sample),
     stop: () => invoke("stop"),
     exportTrace: () => invoke("export-trace"),
     openApp: () => invoke("open-app"),

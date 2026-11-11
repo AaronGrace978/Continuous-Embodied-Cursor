@@ -35,7 +35,6 @@ for (const [selector, name] of [
   [".nav-end", "arrow"],
   [".model-edit", "arrow"],
   [".session-icon", "arrow"],
-  [".session-orb", "cursor"],
   [".illustration-cursor", "cursor"],
   ["#topSettings", "settings"],
   [".example-list button span", "arrow"],

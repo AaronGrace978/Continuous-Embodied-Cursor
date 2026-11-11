@@ -6,6 +6,7 @@ function render(state) {
     stopping: "Stopping…",
     ready: "Connected · idle",
     disconnected: "Disconnected",
+    camera: "Following your hand · pinch to click",
   };
   document.getElementById("phase").textContent =
     names[state.phase] || "Connecting…";
@@ -13,13 +14,15 @@ function render(state) {
     state.goal || "Continuous Cursor · Ctrl+Alt+Esc to stop";
   document.getElementById("dot").className =
     "dot" +
-    (["planning", "moving", "stopping"].includes(state.phase)
+    (["planning", "moving", "stopping", "camera"].includes(state.phase)
       ? " active"
       : "") +
     (state.phase === "stopping" ? " stopping" : "");
-  document.getElementById("stop").disabled = !["planning", "moving"].includes(
-    state.phase,
-  );
+  document.getElementById("stop").disabled = ![
+    "planning",
+    "moving",
+    "camera",
+  ].includes(state.phase);
 }
 window.cursor.state().then(render);
 window.cursor.onEvent((message) => {

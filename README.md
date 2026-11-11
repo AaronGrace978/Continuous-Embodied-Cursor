@@ -102,6 +102,18 @@ See the [desktop app guide](ui/README.md) for controls, credentials, tests,
 Python runtime selection and Windows/Linux packaging. Packaged apps include the
 Python source but require a Python installation; Windows also needs `comtypes`.
 
+The desktop app runs supported explicit commands locally by default, reserving
+Ollama for open-ended goals. Choose **Careful**, **Responsive** (default), or
+**Fast** in Settings. You can add tasks while it works; queued goals run in order
+and pause on failure, interruption, or Stop. Longer goals can continue through
+24 planning rounds and 160 actions, with a guard against repeating the same failure.
+
+**Enable camera** starts a mirrored webcam preview and on-device MediaPipe hand
+tracking. Open your hand to arm, move your index finger to steer, and pinch your
+thumb and index finger to click. The camera is off on launch. Video is never sent
+to Ollama or Python; the cursor engine receives only fingertip coordinates and
+pinch distance. See the guide for the model download, controls and limitations.
+
 ## Native Windows backend
 
 The Windows backend adds:

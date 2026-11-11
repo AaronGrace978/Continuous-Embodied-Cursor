@@ -2,7 +2,7 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const api = window.cursor;
-const ACTIVE = new Set(["planning", "moving", "stopping"]);
+const ACTIVE = new Set(["planning", "moving", "stopping", "camera"]);
 const labels = {
   disconnected: "Disconnected",
   connecting: "Connecting…",
@@ -10,6 +10,7 @@ const labels = {
   planning: "Planning",
   moving: "Cursor active",
   stopping: "Stopping…",
+  camera: "Hand control active",
 };
 let state = {
   phase: "disconnected",
@@ -31,6 +32,133 @@ let activity = [],
   toastTimer;
 let lastPointer = "",
   lastMap = "";
+let pendingGoals = [],
+  queuePaused = false,
+  cameraStarting = false;
+let cameraRun = 0,
+  cameraSessionRequested = false;
+const camera = new HandCamera({
+  video: $("cameraVideo"),
+  canvas: $("cameraCanvas"),
+  onSample: (sample) => api.hand(sample),
+  onStatus: (status) => {
+    $("cameraStatus").textContent = status;
+  },
+  onError: (error) => {
+    toast(error.message, true);
+    void stopCamera();
+  },
+});
+function renderQueue() {
+  $("queueCard").hidden = !pendingGoals.length;
+  $("queueCount").textContent = String(pendingGoals.length);
+  $("queueStatus").textContent = queuePaused
+    ? "Paused. Review the last result, then resume when ready."
+    : "Runs in order. Pauses if a task needs you.";
+  $("resumeQueue").hidden = !queuePaused;
+  $("resumeQueue").disabled =
+    submitting || ACTIVE.has(state.phase) || !state.connected;
+  $("queueList").replaceChildren();
+  for (const [index, goal] of pendingGoals.entries()) {
+    const row = document.createElement("li"),
+      name = document.createElement("span"),
+      remove = document.createElement("button");
+    name.textContent = goal;
+    remove.className = "text-button";
+    remove.textContent = "Remove";
+    remove.setAttribute("aria-label", "Remove queued task " + (index + 1));
+    remove.addEventListener("click", () => {
+      pendingGoals.splice(index, 1);
+      renderQueue();
+    });
+    row.append(name, remove);
+    $("queueList").append(row);
+  }
+}
+async function drainQueue() {
+  if (
+    !queuePaused &&
+    pendingGoals.length &&
+    !submitting &&
+    state.connected &&
+    !ACTIVE.has(state.phase) &&
+    !camera.active
+  ) {
+    const goal = pendingGoals.shift();
+    renderQueue();
+    await executeGoal(goal);
+  }
+}
+async function stopCamera() {
+  cameraRun++;
+  camera.stop();
+  cameraStarting = false;
+  $("cameraPreview").hidden = true;
+  $("cameraStatus").textContent = "Camera off";
+  render();
+  if (cameraSessionRequested || state.phase === "camera")
+    await attempt(() => api.stop());
+}
+async function toggleCamera() {
+  if (camera.active || cameraStarting) {
+    await stopCamera();
+    return;
+  }
+  if (!state.connected || submitting || ACTIVE.has(state.phase)) return;
+  const run = ++cameraRun;
+  cameraStarting = true;
+  queuePaused = true;
+  $("cameraPreview").hidden = false;
+  render();
+  try {
+    if (!(await camera.start()) || run !== cameraRun) return;
+    cameraSessionRequested = true;
+    const finished = api.camera();
+    finished
+      .finally(() => {
+        cameraSessionRequested = false;
+      })
+      .catch(() => {});
+    // Tracking starts when the engine acknowledges exclusive cursor ownership.
+    await new Promise((resolve, reject) => {
+      let timer;
+      const unsubscribe = api.onEvent((message) => {
+        if (message.event === "phase" && message.data.phase === "camera") {
+          clearTimeout(timer);
+          unsubscribe();
+          resolve();
+        }
+      });
+      timer = setTimeout(() => {
+        unsubscribe();
+        reject(
+          new Error("Hand controller did not start. Retry the connection."),
+        );
+      }, 5000);
+      finished.then(
+        () => {
+          clearTimeout(timer);
+          unsubscribe();
+          reject(new Error("Hand control stopped."));
+        },
+        (error) => {
+          clearTimeout(timer);
+          unsubscribe();
+          reject(error);
+        },
+      );
+    });
+    if (run !== cameraRun) return;
+    cameraStarting = false;
+    camera.track();
+    render();
+    await finished;
+  } catch (error) {
+    if (run === cameraRun) toast(error.message, true);
+  } finally {
+    if (run === cameraRun) await stopCamera();
+  }
+}
 
 function toast(message, error = false) {
   $("toast").textContent = String(message).replace(
@@ -105,7 +233,9 @@ function addActivity(message, detail = "", error = false) {
   }
 }
 function render() {
-  const active = ACTIVE.has(state.phase) || submitting;
+  const active = ACTIVE.has(state.phase) || submitting || cameraStarting;
+  const handActive =
+    camera.active || cameraStarting || state.phase === "camera";
   const phase = state.phase;
   $("statusBadge").className = "status-badge " + phase;
   $("statusLabel").textContent = labels[phase] || phase;
@@ -135,9 +265,17 @@ function render() {
   );
   $("connectButton").append(createIcon(state.connected ? "close" : "arrow"));
   $("runButton").disabled =
-    !state.connected || active || !$("goal").value.trim();
-  $("runButton").firstChild.textContent = active ? "Working… " : "Run task ";
-  $("goal").disabled = active;
+    !state.connected ||
+    handActive ||
+    state.phase === "stopping" ||
+    !$("goal").value.trim();
+  $("runButton").firstChild.textContent =
+    submitting || ACTIVE.has(state.phase) ? "Queue task " : "Run task ";
+  $("goal").disabled = handActive;
+  $("cameraButton").disabled = !state.connected || (!handActive && active);
+  $("cameraButton").textContent = handActive
+    ? "Disable camera ■"
+    : "Enable camera ↗";
   $("exportTrace").disabled = !state.connected || active;
   $("stopDock").hidden = !active;
   $("stopButton").disabled = phase === "stopping";
@@ -150,6 +288,7 @@ function render() {
           ? "Simulation running"
           : "Cursor active";
   $("sessionOrb").classList.toggle("active", active);
+  $("sessionOrb").dataset.phase = phase;
   const description =
     phase === "planning"
       ? ["PLANNING", "Choosing the next move. Hold position."]
@@ -160,16 +299,18 @@ function render() {
               ? "Only the simulated pointer is moving."
               : "Your desktop cursor is being controlled.",
           ]
-        : phase === "stopping"
-          ? ["STOPPING", "Cancelling input. Returning control."]
-          : state.connected
-            ? [
-                "ARMED / IDLE",
-                state.mode === "simulation"
-                  ? "Playground mode. Your mouse stays yours."
-                  : "No input until you run a task.",
-              ]
-            : ["STANDBY", "Connect a desktop. Take the controls."];
+        : phase === "camera"
+          ? ["HAND CONTROL", "Following your hand. Pinch to click."]
+          : phase === "stopping"
+            ? ["STOPPING", "Cancelling input. Returning control."]
+            : state.connected
+              ? [
+                  "ARMED / IDLE",
+                  state.mode === "simulation"
+                    ? "Playground mode. Your mouse stays yours."
+                    : "No input until you run a task.",
+                ]
+              : ["STANDBY", "Connect a desktop. Take the controls."];
   $("sessionTitle").textContent = description[0];
   $("sessionDescription").textContent = description[1];
   $("mapTag").textContent = state.connected
@@ -207,6 +348,7 @@ function render() {
     lastMap = "";
     lastPointer = "";
   }
+  renderQueue();
 }
 function svgElement(tag, attributes, text) {
   const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -413,8 +555,45 @@ function renderHistory() {
   }
 }
 function receive(message) {
+  if (message.event === "stop-requested") {
+    cameraRun++;
+    queuePaused = true;
+    camera.stop();
+    cameraStarting = false;
+    $("cameraPreview").hidden = true;
+    $("cameraStatus").textContent = "Camera off";
+    renderQueue();
+  } else if (message.event === "hand-status") {
+    $("cameraStatus").textContent = message.data.status;
+    $("companionMessage").textContent = message.data.status;
+  } else if (message.event === "hand-stopped") {
+    cameraRun++;
+    camera.stop();
+    $("cameraPreview").hidden = true;
+    $("cameraStatus").textContent =
+      message.data.reason === "human_override"
+        ? "Paused · you moved the mouse"
+        : "Camera off";
+    render();
+  }
   if (message.event === "snapshot" || message.event === "phase") {
     state = { ...state, ...message.data };
+    if (state.phase === "stopping") queuePaused = true;
+    if (!state.connected) {
+      queuePaused = true;
+      camera.stop();
+      $("cameraPreview").hidden = true;
+    }
+    if (message.event === "phase")
+      $("companionMessage").textContent =
+        {
+          planning: "Let me work out the next step…",
+          moving: "On it.",
+          ready: "Ready for your next idea.",
+          disconnected: "Ready when you are.",
+          stopping: "Handing control back to you.",
+          camera: "Show me an open hand.",
+        }[state.phase] || "Connecting…";
     render();
   } else if (message.event === "activity") {
     const data = message.data;
@@ -423,12 +602,14 @@ function receive(message) {
         `Plan ${data.round}: ${data.intents?.join("; ") || "Goal complete"}`,
         data.note || "",
       );
-    else if (data.kind === "intent")
+    else if (data.kind === "intent") {
+      $("companionMessage").textContent =
+        `Working on ${data.intent?.action || "the next step"}…`;
       addActivity(
         `Executing ${data.intent?.action || "action"}`,
         data.intent?.target ? JSON.stringify(data.intent.target) : "",
       );
-    else if (data.kind === "surprise")
+    } else if (data.kind === "surprise")
       addActivity("Taking another look", data.what);
     else if (data.kind === "press")
       addActivity(
@@ -437,6 +618,11 @@ function receive(message) {
       );
   } else if (message.event === "report") {
     const report = { ...message.data, mode: state.mode };
+    if (report.status !== "done") queuePaused = true;
+    $("companionMessage").textContent =
+      report.status === "done"
+        ? "Done. What's next?"
+        : "I stopped here. Take a look at the result.";
     history.unshift(report);
     history = history.slice(0, 30);
     renderHistory();
@@ -463,6 +649,8 @@ async function connect() {
   render();
   try {
     if (state.connected) {
+      queuePaused = true;
+      await stopCamera();
       await api.disconnect();
       addActivity("Desktop disconnected");
     } else {
@@ -489,20 +677,38 @@ async function setMode(mode) {
   render();
 }
 async function run() {
-  if (submitting || !state.connected) return;
-  if (settings.provider === "ollama-cloud" && !settings.apiKeyConfigured) {
-    openSettings();
-    $("apiKey").focus();
-    toast("Add your Ollama Cloud API key, or choose offline commands.");
+  if (!state.connected || camera.active || cameraStarting) return;
+  const goal = $("goal").value.trim();
+  if (!goal) return;
+  if (
+    submitting ||
+    camera.active ||
+    cameraStarting ||
+    ACTIVE.has(state.phase)
+  ) {
+    if (pendingGoals.length >= 20) {
+      toast("The queue is full. Wait for a task to finish.");
+      return;
+    }
+    pendingGoals.push(goal);
+    $("goal").value = "";
+    render();
+    addActivity("Task queued", goal);
     return;
   }
+  await executeGoal(goal);
+}
+async function executeGoal(goal) {
+  if (!pendingGoals.length) queuePaused = false;
   submitting = true;
   startedAt = Date.now();
   finishedDuration = null;
   render();
   try {
-    await api.run($("goal").value.trim());
+    const report = await api.run(goal);
+    if (report?.status !== "done") queuePaused = true;
   } catch (error) {
+    queuePaused = true;
     toast(error.message, true);
     addActivity("Task stopped", error.message, true);
   } finally {
@@ -510,6 +716,7 @@ async function run() {
     startedAt = null;
     submitting = false;
     render();
+    void drainQueue();
   }
 }
 function showWorkspace(historyView = false) {
@@ -541,7 +748,12 @@ function keyStatus() {
     !settings.apiKeyConfigured || settings.keyStorage === "environment";
 }
 function openSettings() {
-  if (submitting || ACTIVE.has(state.phase)) {
+  if (
+    submitting ||
+    camera.active ||
+    cameraStarting ||
+    ACTIVE.has(state.phase)
+  ) {
     toast("Stop the task before changing settings.");
     return;
   }
@@ -551,6 +763,8 @@ function openSettings() {
   $("pythonPath").value = settings.pythonPath || "";
   $("indicatorPreference").checked = settings.indicator !== false;
   $("minimizePreference").checked = settings.minimizeOnRun !== false;
+  $("speedPreference").value = settings.speed || "responsive";
+  $("localFirstPreference").checked = settings.localFirst !== false;
   $("apiKey").value = "";
   clearingKey = false;
   $("saveStatus").textContent = "";
@@ -571,6 +785,8 @@ async function saveSettings() {
     clearKey: clearingKey,
     indicator: $("indicatorPreference").checked,
     minimizeOnRun: $("minimizePreference").checked,
+    speed: $("speedPreference").value,
+    localFirst: $("localFirstPreference").checked,
   });
   $("apiKey").value = "";
   clearingKey = false;
@@ -588,7 +804,7 @@ if (!api) {
     true,
   );
 } else {
-  document.querySelector(".brand").addEventListener("click", event => {
+  document.querySelector(".brand").addEventListener("click", (event) => {
     event.preventDefault();
     showWorkspace();
   });
@@ -630,10 +846,31 @@ if (!api) {
       $("goal").focus();
       render();
     });
-  $("stopButton").addEventListener("click", () => attempt(() => api.stop()));
+  $("stopButton").addEventListener("click", () => {
+    queuePaused = true;
+    if (camera.active || cameraStarting) void stopCamera();
+    else void attempt(() => api.stop());
+  });
+  $("cameraButton").addEventListener("click", () => void toggleCamera());
+  $("resumeQueue").addEventListener("click", () => {
+    queuePaused = false;
+    void drainQueue();
+    renderQueue();
+  });
+  $("clearQueue").addEventListener("click", () => {
+    pendingGoals = [];
+    renderQueue();
+  });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !$("settingsDialog").open && submitting)
-      void attempt(() => api.stop());
+    if (
+      event.key === "Escape" &&
+      !$("settingsDialog").open &&
+      (submitting || camera.active || cameraStarting)
+    ) {
+      queuePaused = true;
+      if (camera.active || cameraStarting) void stopCamera();
+      else void attempt(() => api.stop());
+    }
   });
   for (const id of ["settingsNav", "topSettings", "modelButton"])
     $(id).addEventListener("click", openSettings);
@@ -722,9 +959,24 @@ setInterval(() => {
     elapsed == null ? "—" : `${(elapsed / 1000).toFixed(1)} s`;
 }, 100);
 render();
+window.addEventListener("beforeunload", () => camera.stop());
+document.addEventListener("pointermove", (event) => {
+  $("sessionOrb").style.setProperty(
+    "--gaze-x",
+    `${(event.clientX / innerWidth - 0.5) * 7}px`,
+  );
+  $("sessionOrb").style.setProperty(
+    "--gaze-y",
+    `${(event.clientY / innerHeight - 0.5) * 5}px`,
+  );
+});
 
 $("desktopMap").addEventListener("pointermove", (event) => {
-  if (state.connected || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (
+    state.connected ||
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  )
+    return;
   const box = $("desktopMap").getBoundingClientRect();
   const x = (event.clientX - box.left) / box.width - 0.5;
   const y = (event.clientY - box.top) / box.height - 0.5;

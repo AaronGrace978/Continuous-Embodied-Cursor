@@ -50,11 +50,12 @@ Hover is part of the motion, not a separate gesture. The router treats menu item
 
 ## Hierarchical control
 
-`brain/agent.py` calls the planner at decision points only: the start, an intent that failed, a dialog or window that appeared and was not the expected result, and the end of the plan. After a click, drag, key or type it rests briefly (`settle`, 0.12 s) and takes a fresh snapshot, so a dialog that opens as a result has time to be seen. A hidden dialog that becomes visible counts as an appearance. A human override ends the episode; it is not handed back to the planner to fight the person.
+`brain/agent.py` calls the planner at decision points only: the start, an intent that failed, a dialog or window that appeared and was not the expected result, and the end of the plan. Between consequential actions it requests a fresh snapshot and rests for up to `settle` (0.12 s). A full observation with a visible effect can end that pause early; focus/press echoes alone cannot. A hidden dialog that becomes visible counts as an appearance. A human override ends the episode; it is not handed back to the planner to fight the person. Three identical consecutive failed actions stop the episode.
 
 `brain/planner.py` is the protocol: an `Episode` (goal, text observation, history, surprise) in, a `Plan` (intents, done, note, give up) out.
 
 - `brain/heuristic.py` parses plainly worded clauses. It is stateful: a step whose effect already holds is skipped, a retriable failure is tried again, and `target_moved_away` is reported as a slip. A menu path is one click with a `within` chain; if the tree has no such item, it falls back to clicking each level.
+- `brain/automatic.py` chooses the offline parser for supported commands and lazily constructs the configured model planner for other goals. The desktop bridge enables this by default.
 - `brain/llm.py` renders the episode as text, posts it to `/chat/completions`, and validates the JSON. A reply that does not parse is sent back for repair, a small number of times. `response_format` is dropped if the server rejects it.
 
 `brain/observation.py` builds the listing: windows front to back, `role "name"` with states and values, and a line for items that live in closed menus (`File > Export as > PDF document`). An empty window that overlaps a window the accessibility tree has already filled in is dropped, so the window system and AT-SPI are not listed twice. The listing is capped (120 elements by default). No pixels, no coordinates for the model to invent.
@@ -110,9 +111,33 @@ Body, 120 Hz
 | `backends/x11.py`, `atspi.py`, `linux.py` | The live desktop |
 | `cli.py`, `daemon.py`, `render.py`, `demo.py` | Driving it and looking at what it did |
 
-## Out of scope, on purpose
+## Desktop presence and camera input
 
-The live pointer exists on Linux with X11. Wayland needs XWayland. Windows and macOS are not implemented.
+`desktop.py` owns one engine thread. An Electron task queue feeds it goals
+serially, pausing when a report fails or is interrupted. The desktop agent has
+a budget of 24 planning rounds and 160 intents per goal. The main process caps
+each task at ten minutes. `thinking` events mark actual planner calls instead
+of treating every completed intent as another planning round.
+
+`ui/renderer/camera.js` lazily starts video-only capture and local MediaPipe
+Tasks inference. Its runtime is bundled from the pinned npm package; the model
+is fetched from Google's model host only after explicit enable. It forwards
+one normalized sample at a time through the isolated preload. The Python
+bridge retains only the newest sample and expires it after 250 ms. Camera
+control has exclusive engine ownership and remains cancellable through stdin.
+
+`hand.py` applies time-based smoothing, open-hand arming, palm-relative pinch
+hysteresis, debounce, and a one-click latch. It freezes the pointer during a
+pinch and disarms on tracking loss. The engine stops if the physical mouse
+deviates from its commanded position. It maps to the monitor containing the
+pointer at startup; hand control supports left clicks, not dragging. No camera
+frames go to Python or a language model. Camera startup uses generation guards
+so a late permission/model result cannot reactivate a stopped session.
+
+## Platform limitations
+
+The live pointer exists on Linux with X11 and on Windows through Win32/UI
+Automation. Wayland needs XWayland. macOS is not implemented.
 
 XTEST has motion, buttons, keys and the wheel. It has no pressure channel, and `/dev/uinput` is not used.
 

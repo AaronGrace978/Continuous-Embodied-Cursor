@@ -85,7 +85,7 @@ def test_stop_during_inflight_model_prevents_late_clicks(desktop, monkeypatch):
             return Plan((intent_from_obj({'action': 'click', 'target': 'Export'}),), True)
     monkeypatch.setattr(bridge, '_planner', lambda config: BlockedPlanner())
     request(desktop, 1, 'connect', mode='simulation')
-    bridge.submit({'id': 2, 'op': 'run', 'goal': 'click Export'})
+    bridge.submit({'id': 2, 'op': 'run', 'goal': 'click Export', 'config': {'localFirst': False}})
     assert entered.wait(2)
     started = time.monotonic()
     assert request(desktop, 3, 'stop')['ok']
@@ -108,6 +108,31 @@ def test_connection_failure_is_recoverable(desktop):
     reply = request(desktop, 1, 'connect', mode='live')
     assert not reply['ok'] and 'interactive desktop' in reply['error']
     assert request(desktop, 2, 'connect', mode='simulation')['ok']
+
+
+def test_local_first_works_without_cloud_credentials_and_applies_speed(desktop):
+    bridge, _ = desktop
+    request(desktop, 1, 'connect', mode='simulation')
+    result = request(desktop, 2, 'run', goal='click Export', config={'provider': 'ollama-cloud', 'speed': 'fast'})
+    assert result['result']['status'] == 'done'
+    assert bridge.session.body.config.type_rate == 720
+    assert bridge.session.body.controller.config.tempo == 0.6
+
+
+def test_camera_has_exclusive_control_and_stop_is_responsive(desktop):
+    bridge, messages = desktop
+    assert not request(desktop, 1, 'camera')['ok']
+    request(desktop, 2, 'connect', mode='simulation')
+    original = bridge.session.actuator.position()
+    bridge.submit({'id': 3, 'op': 'camera'})
+    messages.wait(lambda item: item.get('event') == 'phase' and item['data']['phase'] == 'camera')
+    assert request(desktop, 4, 'hand', sample={'x': 0.5, 'y': 0.5, 'pinch': 0.2})['ok']
+    assert not request(desktop, 5, 'run', goal='click Export')['ok']
+    assert not request(desktop, 6, 'hand', sample={'x': float('nan'), 'y': 0.5, 'pinch': 1})['ok']
+    assert request(desktop, 7, 'stop')['ok']
+    assert messages.wait(lambda item: item.get('id') == 3)['result']['reason'] == 'cancelled'
+    assert bridge.session.actuator.position() == original
+    assert request(desktop, 8, 'run', goal='click Export')['result']['status'] == 'done'
 
 
 class Handler(BaseHTTPRequestHandler):

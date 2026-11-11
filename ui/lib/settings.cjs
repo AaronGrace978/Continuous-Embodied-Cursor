@@ -8,12 +8,20 @@ const DEFAULTS = Object.freeze({
   indicator: true,
   minimizeOnRun: true,
   pythonPath: "",
+  speed: "responsive",
+  localFirst: true,
 });
 function validate(input, previous = DEFAULTS) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new Error("Invalid settings");
   const next = { ...previous };
-  for (const field of ["provider", "model", "localUrl", "pythonPath"]) {
+  for (const field of [
+    "provider",
+    "model",
+    "localUrl",
+    "pythonPath",
+    "speed",
+  ]) {
     if (input[field] !== undefined) {
       if (typeof input[field] !== "string" || input[field].length > 1000)
         throw new Error(`Invalid ${field}`);
@@ -22,6 +30,8 @@ function validate(input, previous = DEFAULTS) {
   }
   if (!["ollama-cloud", "ollama-local", "offline"].includes(next.provider))
     throw new Error("Choose a supported planner");
+  if (!["careful", "responsive", "fast"].includes(next.speed))
+    throw new Error("Choose a supported movement speed");
   const url = new URL(next.localUrl);
   if (
     !["http:", "https:"].includes(url.protocol) ||
@@ -33,7 +43,7 @@ function validate(input, previous = DEFAULTS) {
     !["", "/"].includes(url.pathname)
   )
     throw new Error("Local Ollama must use a loopback URL");
-  for (const field of ["indicator", "minimizeOnRun"]) {
+  for (const field of ["indicator", "minimizeOnRun", "localFirst"]) {
     if (input[field] !== undefined) {
       if (typeof input[field] !== "boolean")
         throw new Error(`Invalid ${field}`);

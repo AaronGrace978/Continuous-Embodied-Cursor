@@ -18,14 +18,17 @@ const path = require("node:path");
           ? []
           : [path.resolve(__dirname, "..")]),
         ...extra,
+        "--use-fake-device-for-media-stream",
       ],
       env: { ...process.env, CEC_USER_DATA_DIR: userData },
     });
     await app.firstWindow();
-    const page = await Promise.any(app.windows().map(async candidate => {
-      await candidate.waitForURL("**/index.html");
-      return candidate;
-    }));
+    const page = await Promise.any(
+      app.windows().map(async (candidate) => {
+        await candidate.waitForURL("**/index.html");
+        return candidate;
+      }),
+    );
     await page.waitForSelector("#trySimulation");
     assert.equal(await page.evaluate(() => typeof require), "undefined");
     const preferences = await app.evaluate(({ BrowserWindow }) =>
@@ -39,6 +42,21 @@ const path = require("node:path");
           pref.contextIsolation && pref.sandbox && !pref.nodeIntegration,
       ),
     );
+    const media = await page.evaluate(async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const kinds = stream.getTracks().map(track => track.kind);
+      stream.getTracks().forEach(track => track.stop());
+      let microphoneDenied = false;
+      try {
+        const audio = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audio.getTracks().forEach(track => track.stop());
+      } catch { microphoneDenied = true; }
+      const vision = await import("../renderer/vendor/vision/vision_bundle.mjs");
+      return { kinds, microphoneDenied, wasm: await vision.FilesetResolver.isSimdSupported() };
+    });
+    assert.deepEqual(media.kinds, ["video"]);
+    assert.equal(media.microphoneDenied, true);
+    assert.equal(typeof media.wasm, "boolean");
     await page.click("#trySimulation");
     await page.waitForFunction(
       () =>
@@ -46,15 +64,22 @@ const path = require("node:path");
         "Connected · idle",
     );
     await page.click(".brand");
-    await page.evaluate(() => { location.hash = "workspace"; });
-    assert.equal((await page.evaluate(() => window.cursor.state())).connected, true);
+    await page.evaluate(() => {
+      location.hash = "workspace";
+    });
+    assert.equal(
+      (await page.evaluate(() => window.cursor.state())).connected,
+      true,
+    );
     await page.click("#runButton");
     await page.waitForFunction(() =>
       document
         .getElementById("activityFeed")
         .textContent.includes("Task complete"),
     );
-    await page.waitForFunction(() => !document.getElementById("goal").disabled);
+    await page.waitForFunction(
+      () => document.getElementById("stopDock").hidden,
+    );
     await page.fill("#goal", "move to Missing");
     await page.click("#runButton");
     await page.waitForFunction(
@@ -68,7 +93,7 @@ const path = require("node:path");
     );
     if (process.env.CEC_TEST_LIVE_INDICATOR === "1") {
       await page.waitForFunction(
-        () => !document.getElementById("goal").disabled,
+        () => document.getElementById("stopDock").hidden,
       );
       await page.click("#connectButton");
       await page.waitForFunction(

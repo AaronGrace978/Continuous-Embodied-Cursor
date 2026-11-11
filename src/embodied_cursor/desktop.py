@@ -11,10 +11,11 @@ import queue
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from .brain.agent import Agent
+from .brain.automatic import AutomaticPlanner
 from .brain.heuristic import HeuristicPlanner
 from .brain.observation import observe
 from .brain.ollama import OllamaPlanner, endpoint, list_models
@@ -78,6 +79,8 @@ class DesktopBridge:
         self.closed = threading.Event()
         self.lock = threading.RLock()
         self.running = False
+        self.hand_sample = None
+        self.hand_received = 0.0
         self.jobs: queue.Queue = queue.Queue()
         self.worker = threading.Thread(target=self._work, name="cec-desktop-engine", daemon=True)
         self.worker.start()
@@ -88,7 +91,7 @@ class DesktopBridge:
         self.emit({"id": ident, "ok": error is None, **({"error": error} if error else {"result": result})})
 
     def _state(self, phase):
-        if self.cancel.is_set() and self.running and phase in ("planning", "moving"):
+        if self.cancel.is_set() and self.running and phase in ("planning", "moving", "camera"):
             phase = "stopping"
         with self.lock:
             self.phase = phase
@@ -103,18 +106,31 @@ class DesktopBridge:
                 self._state("stopping")
             self._reply(ident, {"stopping": self.running})
             return
-        if op not in ("connect", "disconnect", "run", "models", "test-provider", "trace"):
+        if op == "hand":
+            try:
+                from .hand import HandSample
+                sample = HandSample.parse(message.get("sample"))
+                with self.lock:
+                    if not self.running or self.phase != "camera":
+                        raise ValueError("Hand control is not active")
+                    self.hand_sample = sample
+                    self.hand_received = time.monotonic()
+                self._reply(ident, {"received": True})
+            except ValueError as exc:
+                self._reply(ident, error=str(exc))
+            return
+        if op not in ("connect", "disconnect", "run", "camera", "models", "test-provider", "trace"):
             self._reply(ident, error="Unsupported desktop operation")
             return
         with self.lock:
             if self.running and op not in ("disconnect",):
                 self._reply(ident, error="Stop the current task before starting another operation")
                 return
-            if op == "run":
+            if op in ("run", "camera"):
                 if not self.session:
                     self._reply(ident, error="Connect a desktop or simulation first")
                     return
-                if not isinstance(message.get("goal"), str) or not 0 < len(message["goal"].strip()) <= 4000:
+                if op == "run" and (not isinstance(message.get("goal"), str) or not 0 < len(message["goal"].strip()) <= 4000):
                     self._reply(ident, error="Enter a goal of up to 4,000 characters")
                     return
                 self.cancel.clear()
@@ -166,10 +182,10 @@ class DesktopBridge:
                     if key:
                         error = error.replace(key, "[redacted]")
                     self._reply(ident, error=error)
-                    if op in ("connect", "run"):
+                    if op in ("connect", "run", "camera"):
                         self._state("ready" if self.session else "disconnected")
                 finally:
-                    if op == "run":
+                    if op in ("run", "camera"):
                         with self.lock:
                             self.running = False
                         self.snapshot()
@@ -224,13 +240,24 @@ class DesktopBridge:
                 raise ValueError("Connect a desktop before exporting a trace")
             from .render import scene_of
             return {**self.session.body.trace.to_obj(), "scene": scene_of(self.session.world), "report": self.last_report}
+        if op == "camera":
+            return self._camera()
         if op == "run":
             self.goal = message["goal"].strip()
-            planner = self._planner(message.get("config", {}))
+            config = message.get("config", {})
+            planner = AutomaticPlanner(lambda: self._planner(config)) if config.get("localFirst", True) else self._planner(config)
+            speed = config.get("speed", "responsive")
+            if speed not in ("careful", "responsive", "fast"):
+                raise ValueError("Choose a supported movement speed")
+            body = self.session.body
+            tempo, type_rate = {"careful": (1.15, 60), "responsive": (0.8, 240), "fast": (0.6, 720)}[speed]
+            body.config = replace(body.config, type_rate=type_rate)
+            body.ctx.config = body.config
+            body.controller.config = replace(body.controller.config, tempo=tempo)
             self._state("planning")
             if hasattr(self.session, "settle"):
                 self.session.settle(2.0)
-            agent = Agent(self.session.body, planner, on_event=self._agent_event)
+            agent = Agent(self.session.body, planner, max_rounds=24, max_intents=160, on_event=self._agent_event)
             report = agent.run(self.goal, cancel=self.cancel)
             if self.cancel.is_set():
                 report.status, report.reason = "interrupted", "cancelled"
@@ -241,10 +268,58 @@ class DesktopBridge:
             return self.last_report
         raise ValueError("Unsupported operation")
 
+    def _camera(self):
+        from .hand import HandController
+        actuator = self.session.actuator
+        monitors = self.session.world.monitors
+        actual = actuator.position()
+        bounds = next((rect for rect in monitors if rect.contains(actual)), monitors[0] if monitors else None)
+        if bounds is None:
+            raise ValueError("No monitor available for hand control")
+        controller = HandController(bounds)
+        self.goal = "Hand control · open hand to move, pinch to click"
+        with self.lock:
+            self.hand_sample = None
+            self.hand_received = 0
+        self._state("camera")
+        commanded = actual.rounded()
+        last_status = ""
+        reason = "cancelled"
+        while not self.cancel.wait(1 / 60) and not self.closed.is_set():
+            actual = actuator.position()
+            if actual.dist(type(actual)(*commanded)) > self.session.body.config.override_px:
+                reason = "human_override"
+                break
+            with self.lock:
+                received = self.hand_received
+                sample = self.hand_sample if time.monotonic() - received < 0.25 else None
+            # Debounce advances only with new camera evidence. Reusing a single
+            # pinch frame at motor rate must not turn a stalled stream into a click.
+            position, click, status = controller.update(sample, received if sample is not None else time.monotonic())
+            if position is not None:
+                commanded = position.rounded()
+                actuator.move_to(*commanded)
+            if click and not self.cancel.is_set():
+                try:
+                    actuator.button(1, True)
+                finally:
+                    actuator.button(1, False)
+            self._pointer = list(actuator.position().rounded())
+            if status != last_status:
+                self.emit({"event": "hand-status", "data": {"status": status}})
+                last_status = status
+        self.session.body.controller.reset(actuator.position())
+        self.goal = ""
+        self._state("ready")
+        self.emit({"event": "hand-stopped", "data": {"reason": reason}})
+        return {"reason": reason}
+
     def _agent_event(self, kind, data):
-        if kind == "plan":
+        if kind == "thinking":
+            self._state("planning")
+        elif kind == "plan":
             self._state("moving" if data.get("intents") else "planning")
-        elif kind in ("surprise", "outcome"):
+        elif kind == "surprise":
             self._state("planning")
         self.emit({"event": "activity", "data": {"kind": kind, **data}})
 
@@ -260,7 +335,7 @@ class DesktopBridge:
                 "connected": session is not None}
         if session:
             try:
-                pointer = session.body.controller.pos.rounded() if running else self._pointer
+                pointer = session.body.controller.pos.rounded() if running and phase != "camera" else self._pointer
                 from .geometry import Vec2
                 observation = observe(session.world, Vec2(*pointer), session.body.clock.now()).to_obj()
                 data.update(pointer=list(pointer), elements=[el.to_obj() for el in session.world.elements() if el.visible],

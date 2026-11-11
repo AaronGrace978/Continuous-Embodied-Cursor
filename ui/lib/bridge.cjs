@@ -149,11 +149,14 @@ class PythonBridge extends EventEmitter {
       throw new Error("Desktop backend is disconnected");
     const id = ++this.counter;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        if (op === "run") this.kill();
-        reject(new Error("Desktop request timed out"));
-      }, timeout);
+      const timer =
+        timeout > 0
+          ? setTimeout(() => {
+              this.pending.delete(id);
+              if (op === "run") this.kill();
+              reject(new Error("Desktop request timed out"));
+            }, timeout)
+          : null;
       this.pending.set(id, { resolve, reject, timer });
       this.child.stdin.write(
         JSON.stringify({ id, op, ...data }) + "\n",

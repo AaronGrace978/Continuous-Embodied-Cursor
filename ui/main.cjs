@@ -40,7 +40,7 @@ let busy = false,
   quitting = false,
   shortcutAvailable = false,
   stopTimer;
-const ACTIVE = new Set(["planning", "moving", "stopping"]);
+const ACTIVE = new Set(["planning", "moving", "stopping", "camera"]);
 function broadcast(message) {
   if (message.event === "snapshot") snapshot = { ...message.data };
   if (message.event === "phase") snapshot = { ...snapshot, ...message.data };
@@ -122,6 +122,11 @@ function setupBridge() {
   return instance;
 }
 async function stop() {
+  if (mainWindow && !mainWindow.isDestroyed())
+    mainWindow.webContents.send("cec:event", {
+      event: "stop-requested",
+      data: {},
+    });
   const current = bridge;
   if (!current?.child) return { stopped: true };
   clearTimeout(stopTimer);
@@ -164,6 +169,7 @@ app.whenReady().then(() => {
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: true,
+    backgroundThrottling: false,
   };
   mainWindow = new BrowserWindow({
     width: 1360,
@@ -180,6 +186,22 @@ app.whenReady().then(() => {
     show: false,
     webPreferences,
   });
+  const cameraPermission = (contents, permission, details) =>
+    contents === mainWindow?.webContents &&
+    contents.getURL().split("#")[0] === MAIN_URL &&
+    permission === "media" &&
+    (details?.mediaTypes
+      ? details.mediaTypes.length === 1 && details.mediaTypes[0] === "video"
+      : details?.mediaType === "video");
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (contents, permission, callback, details) => {
+      callback(cameraPermission(contents, permission, details));
+    },
+  );
+  mainWindow.webContents.session.setPermissionCheckHandler(
+    (contents, permission, _origin, details) =>
+      cameraPermission(contents, permission, details),
+  );
   indicator = new BrowserWindow({
     width: 342,
     height: 74,
@@ -262,12 +284,28 @@ app.whenReady().then(() => {
     if (store.settings.minimizeOnRun && snapshot.mode === "live")
       mainWindow.minimize();
     try {
-      return await bridge.request("run", { goal, config: store.config() });
+      return await bridge.request(
+        "run",
+        { goal, config: store.config() },
+        600000,
+      );
     } finally {
       busy = false;
       clearTimeout(stopTimer);
     }
   });
+  register("camera", async () => {
+    if (busy || !snapshot.connected)
+      throw new Error("Connect a desktop and finish the current task first");
+    busy = true;
+    try {
+      return await bridge.request("camera", {}, 0);
+    } finally {
+      busy = false;
+      clearTimeout(stopTimer);
+    }
+  });
+  register("hand", (sample) => bridge.request("hand", { sample }, 2000));
   register("stop", stop, true);
   register("open-app", openApp, true);
   register("export-trace", async () => {

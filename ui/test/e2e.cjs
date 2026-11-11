@@ -32,6 +32,7 @@ const { SettingsStore } = require("../lib/settings.cjs");
   const assets = new Set([
     "index.html",
     "app.js",
+    "camera.js",
     "icons.js",
     "styles.css",
     "fonts.css",
@@ -111,6 +112,8 @@ const { SettingsStore } = require("../lib/settings.cjs");
       if (op === "run")
         return bridge.request("run", { goal: arg, config: store.config() });
       if (op === "stop") return bridge.request("stop");
+      if (op === "camera") return bridge.request("camera", {}, 0);
+      if (op === "hand") return bridge.request("hand", { sample: arg });
       if (op === "models" || op === "testProvider")
         return bridge.request(op === "models" ? "models" : "test-provider", {
           config: store.config(),
@@ -140,6 +143,8 @@ const { SettingsStore } = require("../lib/settings.cjs");
         "disconnect",
         "run",
         "stop",
+        "camera",
+        "hand",
         "models",
         "testProvider",
         "exportTrace",
@@ -171,6 +176,20 @@ const { SettingsStore } = require("../lib/settings.cjs");
       await page.locator("#modelName").textContent(),
       "No model needed",
     );
+    assert.equal(await page.locator(".companion-eyes i").count(), 2);
+    // An unavailable camera must leave the connected desktop usable.
+    await page.evaluate(() => {
+      navigator.mediaDevices.getUserMedia = async () => {
+        throw new DOMException("denied", "NotAllowedError");
+      };
+    });
+    await page.click("#cameraButton");
+    await page.waitForFunction(() =>
+      document
+        .getElementById("toast")
+        .textContent.includes("permission was denied"),
+    );
+    assert.equal(await page.locator("#cameraPreview").isHidden(), true);
     await page.click("#runButton");
     await page.waitForFunction(() =>
       document
@@ -214,7 +233,9 @@ const { SettingsStore } = require("../lib/settings.cjs");
     await page.waitForFunction(
       () => document.getElementById("historyCount").textContent === "2",
     );
-    await page.waitForFunction(() => !document.getElementById("goal").disabled);
+    await page.waitForFunction(
+      () => document.getElementById("stopDock").hidden,
+    );
     await page.click("#topSettings");
     await page.selectOption("#provider", "offline");
     await page.click("#settingsForm button[type=submit]");
@@ -227,13 +248,80 @@ const { SettingsStore } = require("../lib/settings.cjs");
       path: path.join(results, "active.png"),
       fullPage: true,
     });
+    await page.fill("#goal", "click Export");
+    await page.click("#runButton");
+    await page.waitForFunction(
+      () => document.getElementById("queueCount").textContent === "1",
+    );
     await page.click("#stopButton");
     await page.waitForFunction(() =>
       document
         .getElementById("activityFeed")
         .textContent.includes("Task interrupted"),
     );
-    await page.waitForFunction(() => !document.getElementById("goal").disabled);
+    await page.waitForFunction(
+      () => document.getElementById("stopDock").hidden,
+    );
+    assert.equal(await page.locator("#queueCount").textContent(), "1");
+    assert.equal(await page.locator("#resumeQueue").isVisible(), true);
+    await page.click("#resumeQueue");
+    await page.waitForFunction(
+      () => document.getElementById("historyCount").textContent === "4",
+    );
+    await page.waitForFunction(
+      () => document.getElementById("stopDock").hidden,
+    );
+    assert.equal(await page.locator("#queueCard").isHidden(), true);
+    await page.fill("#goal", 'fill Notes with "' + "a".repeat(480) + '"');
+    await page.click("#runButton");
+    await page.waitForFunction(
+      () =>
+        document.getElementById("statusLabel").textContent === "Cursor active",
+    );
+    await page.fill("#goal", "click Export");
+    await page.click("#runButton");
+    await page.fill("#goal", "check Word wrap");
+    await page.click("#runButton");
+    await page.waitForFunction(
+      () => document.getElementById("historyCount").textContent === "7",
+    );
+    await page.waitForFunction(
+      () => document.getElementById("stopDock").hidden,
+    );
+    assert.equal(
+      await page.locator("#historyList h3").nth(0).textContent(),
+      "check Word wrap",
+    );
+    assert.equal(
+      await page.locator("#historyList h3").nth(1).textContent(),
+      "click Export",
+    );
+    assert.equal(await page.locator("#queueCard").isHidden(), true);
+    // Exercise production camera ownership and Stop over the real Python IPC.
+    // Only the hardware/model boundary is stubbed for this headless test.
+    await page.evaluate(() => {
+      HandCamera.prototype.start = async function () {
+        this.active = true;
+        return true;
+      };
+      HandCamera.prototype.track = function () {
+        void this.onSample({ x: 0.5, y: 0.5, pinch: 1 });
+      };
+    });
+    await page.click("#cameraButton");
+    await page.waitForFunction(
+      () =>
+        document.getElementById("statusLabel").textContent ===
+        "Hand control active",
+    );
+    assert.equal(await page.locator("#runButton").isDisabled(), true);
+    await page.click("#stopButton");
+    await page.waitForFunction(
+      () =>
+        document.getElementById("statusLabel").textContent ===
+        "Connected · idle",
+    );
+    assert.equal(await page.locator("#cameraPreview").isHidden(), true);
     await page.click("#exportTrace");
     await page.waitForFunction(
       () => document.getElementById("toast").textContent === "Trace exported.",
@@ -264,7 +352,7 @@ const { SettingsStore } = require("../lib/settings.cjs");
     assert.equal(await page.locator("#runButton").isDisabled(), true);
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: real Python-backed UI connection, task execution, model listing, provider test, cancellation, history, export, key storage and disconnect.",
+      "PASS: Python-backed UI, planning, queued goals, pause/resume, camera lifecycle, cancellation, history, export, key storage and disconnect.",
     );
     console.log("Screenshots: ui/test-results/{welcome,active,dashboard}.png");
   } finally {

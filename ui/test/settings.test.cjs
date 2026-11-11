@@ -79,4 +79,7 @@ test("invalid local endpoints, provider names and values are rejected", () => {
   assert.throws(() => validate({ provider: "shell" }));
   assert.throws(() => validate({ indicator: "true" }));
   assert.throws(() => validate({ pythonPath: ["python", "-c", "code"] }));
+  assert.throws(() => validate({ speed: "unsafe" }));
+  assert.throws(() => validate({ localFirst: "yes" }));
+  assert.equal(validate({ speed: "fast", localFirst: false }).speed, "fast");
 });

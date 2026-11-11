@@ -20,6 +20,7 @@ from embodied_cursor.backends.sim import (
 )
 from embodied_cursor.body import BodyConfig
 from embodied_cursor.brain.agent import Agent
+from embodied_cursor.brain.automatic import AutomaticPlanner
 from embodied_cursor.brain.heuristic import HeuristicPlanner, Unparseable, parse_clause, parse_target, split_clauses
 from embodied_cursor.brain.llm import LLMPlanner, parse_reply, render_episode
 from embodied_cursor.brain.observation import observe
@@ -148,6 +149,57 @@ def test_agent_runs_a_multi_step_goal(app):
     assert events.count("plan") == 1
 
 
+def test_automatic_planner_does_not_construct_a_model_for_commands(app):
+    def no_network():
+        pytest.fail("A plain command must not call the model provider")
+    report = Agent(make_body(app), AutomaticPlanner(no_network)).run('fill Search with "hello"; click Delete')
+    assert report.ok and app.search.text == "hello" and app.delete.clicks == 1
+
+
+def test_automatic_planner_uses_model_for_an_open_ended_goal(app):
+    calls = []
+    class Model:
+        def plan(self, episode):
+            calls.append(episode.goal)
+            return Plan(done=True)
+    assert Agent(make_body(app), AutomaticPlanner(Model)).run("make my report easier to read").ok
+    assert calls == ["make my report easier to read"]
+
+
+def test_cancellation_during_planning_cannot_report_success_or_act(app):
+    cancel = threading.Event()
+    class Model:
+        def plan(self, episode):
+            cancel.set()
+            return Plan(done=True)
+    report = Agent(make_body(app), Model()).run("a goal", cancel)
+    assert report.status == "interrupted" and report.reason == "cancelled"
+
+
+def test_fresh_snapshots_remove_fixed_inter_action_waits(app):
+    body = make_body(app, snapshot_hz=60)
+    # Compare the agent with exactly the same two skills, run directly.
+    first = body.execute(Click(Selector(name="Wrap lines")))
+    second = body.execute(Click(Selector(name="Wrap lines")))
+    app2 = SimDesktop(pointer=Vec2(200, 800))
+    win = app2.add(Window("Editor", Rect(100, 100, 1400, 800)))
+    win.add(Button("Wrap lines", Rect(300, 300, 140, 28), checkable=True))
+    body2 = make_body(app2, snapshot_hz=60)
+    report = Agent(body2, HeuristicPlanner()).run("click Wrap lines; click Wrap lines")
+    assert report.ok
+    assert body2.clock.now() - first.duration - second.duration < 0.05
+
+
+def test_persistent_planning_stops_a_repeated_failure(app):
+    class Stuck:
+        def plan(self, episode):
+            return Plan((Click(Selector(name="Missing")),), done=True)
+    body = make_body(app, config=BodyConfig(resolve_timeout=0.02))
+    report = Agent(body, Stuck(), max_rounds=24).run("finish a task")
+    assert report.status == "failed" and "three times" in report.reason
+    assert len(report.outcomes) == 3
+
+
 def test_steps_that_already_hold_are_skipped(app):
     app.wrap.checked = True
     body = make_body(app)
@@ -157,9 +209,10 @@ def test_steps_that_already_hold_are_skipped(app):
     assert app.wrap.clicks == 0
 
 
-def test_agent_replans_when_a_dialog_interrupts(app):
+@pytest.mark.parametrize("delay", [0, 0.09])
+def test_agent_replans_when_a_dialog_interrupts(app, delay):
     # Deleting pops a confirmation over the rest of the window.
-    app.delete.on_click = lambda b: app.dialog.show()
+    app.delete.on_click = lambda b: app.after(delay, app.dialog.show)
 
     class Scripted:
         def __init__(self):

@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from ..body import Body
 from ..intents import Intent, Outcome
-from ..world.element import Role
+from ..world.element import Role, State
 from .observation import describe, observe
 from .planner import Episode, Plan, Planner, PlannerError
 
@@ -97,12 +97,16 @@ class Agent:
 
             observation = observe(body.world, body.actuator.position(), clock.now())
             started = clock.now()
+            self._say("thinking", round=round_no)
             try:
                 plan: Plan = self.planner.plan(Episode(goal, observation, list(report.outcomes), surprise))
             except PlannerError as exc:
                 report.status, report.reason = "failed", f"planner: {exc}"
                 return report
             report.planning_time += clock.now() - started
+            if cancel is not None and cancel.is_set():
+                report.status, report.reason = "interrupted", "cancelled"
+                return report
             self._say("plan", round=round_no, intents=[i.describe() for i in plan.intents], done=plan.done, note=plan.note)
 
             if plan.give_up:
@@ -134,14 +138,32 @@ class Agent:
                     report.status, report.reason = "interrupted", outcome.reason
                     return report
                 if not outcome.ok or outcome.observed.get("target_moved_away"):
+                    recent = report.outcomes[-3:]
+                    if len(recent) == 3 and all(
+                        not item.ok and item.reason == outcome.reason and item.intent == outcome.intent
+                        for item in recent
+                    ):
+                        report.status = "failed"
+                        report.reason = f"stopped after the same action failed three times ({outcome.reason})"
+                        return report
                     cut_short = True
                     break
                 if position < len(plan.intents) - 1:
                     if getattr(intent, "expect", None) is None and intent.action in _CONSEQUENTIAL:
                         # Give the consequences of the action a moment to show
                         # up before committing to the next one.
+                        requested = clock.now()
                         body.perception.request_snapshot()
-                        body.rest(self.settle)
+                        # A fresh snapshot can finish well before the fallback
+                        # pause. Do not spend the rest of it doing nothing.
+                        deadline = clock.now() + self.settle
+                        while clock.now() < deadline:
+                            if cancel is not None and cancel.is_set():
+                                report.status, report.reason = "interrupted", "cancelled"
+                                return report
+                            body.rest(min(1 / body.config.hz, deadline - clock.now()))
+                            if body.perception.fresh_since(requested) and self._effect_visible(revision):
+                                break
                     surprise = self._surprise(revision, intent)
                     if surprise:
                         self._say("surprise", what=surprise)
@@ -152,6 +174,17 @@ class Agent:
                 return report
         report.reason = report.reason or f"no result after {self.max_rounds} planning rounds"
         return report
+
+    def _effect_visible(self, revision: int) -> bool:
+        """Focus/press echoes alone do not prove the application has reacted."""
+        transient = {State.FOCUSED, State.PRESSED, State.ACTIVE}
+        for change in self.body.world.changes_since(revision):
+            if change.kind in ("appeared", "vanished", "value", "name"):
+                return True
+            if change.kind == "state" and change.previous is not None:
+                if (change.element.states ^ change.previous.states) - transient:
+                    return True
+        return False
 
     def _surprise(self, revision: int, intent: Intent) -> str:
         """Did something open that the plan did not ask for?

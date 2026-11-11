@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://storage.googleapis.com; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>CEC / Control room</title>
     <link rel="stylesheet" href="styles.css" />
@@ -210,13 +210,21 @@
               <span class="session-icon">↗</span>
             </div>
             <div class="session-status">
-              <span id="sessionOrb" class="session-orb">↗</span>
+              <span
+                id="sessionOrb"
+                class="session-orb companion"
+                aria-hidden="true"
+                ><span class="companion-eyes"><i></i><i></i></span
+              ></span>
               <div>
                 <span class="status-caption">ENGINE STATE</span>
                 <h3 id="sessionTitle">STANDBY</h3>
               </div>
             </div>
             <p id="sessionDescription">Connect a desktop. Take the controls.</p>
+            <p id="companionMessage" class="companion-message" role="status">
+              Ready when you are.
+            </p>
             <dl class="session-stats">
               <div>
                 <dt>ENVIRONMENT</dt>
@@ -297,6 +305,57 @@
           <div class="command-hint" id="goalHint">
             Connect your desktop, or enter the playground.
           </div>
+        </section>
+        <section class="presence-card" aria-label="Hand control">
+          <div class="presence-copy">
+            <p class="eyebrow">A LITTLE MORE PRESENT</p>
+            <h2>Give it a hand.</h2>
+            <p>
+              Move with your index finger. Pinch to click. Open your hand to
+              begin.
+            </p>
+            <p class="field-note">
+              Camera processing stays on this device. First use downloads
+              Google's hand model.
+            </p>
+          </div>
+          <div class="camera-controls">
+            <button id="cameraButton" class="button secondary" disabled>
+              Enable camera ↗
+            </button>
+            <span id="cameraStatus" role="status">Camera off</span>
+          </div>
+          <div id="cameraPreview" class="camera-preview" hidden>
+            <video
+              id="cameraVideo"
+              autoplay
+              muted
+              playsinline
+              aria-label="Mirrored camera preview"
+            ></video>
+            <canvas id="cameraCanvas" aria-hidden="true"></canvas>
+            <span class="camera-local">ON DEVICE · PINCH TO CLICK</span>
+          </div>
+        </section>
+        <section
+          id="queueCard"
+          class="queue-card"
+          aria-label="Task queue"
+          hidden
+        >
+          <div class="card-heading">
+            <h2>UP NEXT <span id="queueCount">0</span></h2>
+            <div>
+              <button id="resumeQueue" class="text-button" hidden>
+                Resume queue ↗
+              </button>
+              <button id="clearQueue" class="text-button">Clear queue</button>
+            </div>
+          </div>
+          <p id="queueStatus" class="field-note">
+            Runs in order. Pauses if a task needs you.
+          </p>
+          <ol id="queueList"></ol>
         </section>
         <section class="activity-card">
           <div class="card-heading">
@@ -423,6 +482,22 @@
           </p>
         </div>
         <div class="preferences">
+          <label for="speedPreference">Movement speed</label>
+          <select id="speedPreference">
+            <option value="careful">
+              Careful · slower movement and typing
+            </option>
+            <option value="responsive" selected>
+              Responsive · everyday tasks
+            </option>
+            <option value="fast">Fast · brisk movement and typing</option>
+          </select>
+          <label class="checkbox-label"
+            ><input id="localFirstPreference" type="checkbox" checked /><span
+              >Run explicit commands locally, use the model for open-ended
+              goals</span
+            ></label
+          >
           <label class="checkbox-label"
             ><input id="indicatorPreference" type="checkbox" checked /><span
               >Keep an activity indicator above other windows</span
@@ -457,6 +532,7 @@
     </dialog>
     <div class="toast" id="toast" role="alert" hidden></div>
     <script src="icons.js"></script>
+    <script src="camera.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
