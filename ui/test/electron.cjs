@@ -43,16 +43,29 @@ const path = require("node:path");
       ),
     );
     const media = await page.evaluate(async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      const kinds = stream.getTracks().map(track => track.kind);
-      stream.getTracks().forEach(track => track.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+      const kinds = stream.getTracks().map((track) => track.kind);
+      stream.getTracks().forEach((track) => track.stop());
       let microphoneDenied = false;
       try {
-        const audio = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audio.getTracks().forEach(track => track.stop());
-      } catch { microphoneDenied = true; }
-      const vision = await import("../renderer/vendor/vision/vision_bundle.mjs");
-      return { kinds, microphoneDenied, wasm: await vision.FilesetResolver.isSimdSupported() };
+        const audio = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        audio.getTracks().forEach((track) => track.stop());
+      } catch {
+        microphoneDenied = true;
+      }
+      const vision = await import(
+        "../renderer/vendor/vision/vision_bundle.mjs"
+      );
+      return {
+        kinds,
+        microphoneDenied,
+        wasm: await vision.FilesetResolver.isSimdSupported(),
+      };
     });
     assert.deepEqual(media.kinds, ["video"]);
     assert.equal(media.microphoneDenied, true);
@@ -116,6 +129,66 @@ const path = require("node:path");
         ),
       );
       assert.equal(visible, true);
+      // Real native text entry: the keyboard must never take focus from this app.
+      const targetId = await app.evaluate(async ({ BrowserWindow }) => {
+        const target = new BrowserWindow({
+          width: 500,
+          height: 240,
+          x: 30,
+          y: 100,
+          webPreferences: { contextIsolation: true, sandbox: true },
+        });
+        await target.loadURL(
+          'data:text/html,<textarea id="target" autofocus style="width:90%;height:120px"></textarea>',
+        );
+        target.show();
+        target.focus();
+        return target.id;
+      });
+      const target = app
+        .windows()
+        .find((win) => win.url().startsWith("data:text/html"));
+      await target.waitForSelector("#target");
+      await page.evaluate(() => window.cursor.keyboardToggle(true));
+      const keyboard = app
+        .windows()
+        .find((win) => win.url().endsWith("keyboard.html"));
+      await keyboard.waitForSelector('[data-key="f"]');
+      assert.equal(
+        await app.evaluate(
+          ({ BrowserWindow }, id) => BrowserWindow.fromId(id).isFocused(),
+          targetId,
+        ),
+        true,
+      );
+      for (const id of ["h", "i", "Shift", "1", "Backspace", "Enter", "a"])
+        await keyboard.evaluate((id) => window.cursor.keyboardPress(id), id);
+      await target.waitForFunction(
+        () => document.getElementById("target").value === "hi\na",
+      );
+      assert.equal(
+        await app.evaluate(
+          ({ BrowserWindow }, id) => BrowserWindow.fromId(id).isFocused(),
+          targetId,
+        ),
+        true,
+      );
+      await keyboard.waitForFunction(() => !document.querySelector(".pressed"));
+      await keyboard.screenshot({
+        path: path.resolve(__dirname, "../test-results/keyboard.png"),
+      });
+      await keyboard.evaluate(() =>
+        window.cursor.keyboardPress("HideKeyboard"),
+      );
+      assert.equal(
+        (await page.evaluate(() => window.cursor.keyboardState())).visible,
+        false,
+      );
+      await app.evaluate(
+        ({ BrowserWindow }, id) => BrowserWindow.fromId(id).destroy(),
+        targetId,
+      );
+      await page.evaluate(() => window.cursor.openApp());
       const strip = app
         .windows()
         .find((win) => win.url().endsWith("indicator.html"));
@@ -144,7 +217,7 @@ const path = require("node:path");
     const count = await app.evaluate(
       ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
     );
-    assert.equal(count, 2);
+    assert.equal(count, 3);
     const result = path.resolve(__dirname, "../test-results");
     fs.mkdirSync(result, { recursive: true });
     await page.screenshot({ path: path.join(result, "electron.png") });

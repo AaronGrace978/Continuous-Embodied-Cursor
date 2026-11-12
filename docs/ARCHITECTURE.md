@@ -134,6 +134,34 @@ pointer at startup; hand control supports left clicks, not dragging. No camera
 frames go to Python or a language model. Camera startup uses generation guards
 so a late permission/model result cannot reactivate a stopped session.
 
+`HandSample.gesture` adds pointer, scroll, and keyboard poses. `HandAction`
+returns pointer/click output plus wheel deltas and a keyboard summon edge.
+The scroll clutch freezes the pointer, debounces entry, applies a dead zone,
+and integrates a bounded rate using fresh camera timestamps. Returning to the
+pointer requires open-hand arming. Three-finger holds latch once until an open
+hand rearms them.
+
+`ui/renderer/air-keyboard.js` owns shared US QWERTY geometry, camera-space
+calibration, and per-hand/per-finger tap state. It locks the hovered key after
+100 ms of extension, confirms a 45 ms bend with angular hysteresis, and requires
+release before another press. Tracking loss, long gaps, identity jumps, and key
+gutters disarm taps. The detector tracks up to two hands locally. Typing mode
+sends absent pointer samples to Python, so it cannot steer or pinch-click.
+
+`ui/lib/keyboard.cjs` resolves key IDs into text or a small native key allowlist.
+Software Shift/Caps state is shared by air and mouse activation. The floating
+keyboard is an isolated, sandboxed, nonfocusable BrowserWindow shown with
+`showInactive()`. It renders the same geometry and normalized finger feedback.
+The main process serializes requests, bounds admission, and invalidates queued
+requests when visibility/ownership changes. Python consumes camera-time input
+on the existing engine thread via a bounded queue; stop epochs reject late
+keystrokes, and native keys are always released. Frames never leave the renderer.
+The timer-based inference scheduler continues when the main window is minimized;
+startup generation guards also reject late samples after Stop.
+
+Operational details and current recognition limits are in
+[HAND_CONTROL.md](HAND_CONTROL.md).
+
 ## Platform limitations
 
 The live pointer exists on Linux with X11 and on Windows through Win32/UI

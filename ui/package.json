@@ -1,8 +1,8 @@
 {
   "name": "continuous-cursor-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Native desktop control with Ollama Cloud and an always-visible activity indicator",
+  "description": "Native desktop control with camera hand scrolling and calibrated finger typing",
   "author": "Continuous Embodied Cursor contributors",
   "license": "AGPL-3.0-or-later",
   "main": "main.cjs",

@@ -192,3 +192,53 @@ def test_local_endpoint_cannot_redirect_a_cloud_key(url):
     assert endpoint('ollama-cloud', url) == 'https://ollama.com'
     with pytest.raises(ValueError):
         endpoint('ollama-local', url)
+
+
+def test_virtual_keyboard_types_into_focused_app_during_camera_without_pointer_motion(desktop):
+    bridge, messages = desktop
+    assert not request(desktop, 100, 'keyboard-input', text='x')['ok']
+    request(desktop, 101, 'connect', mode='simulation')
+    request(desktop, 102, 'run', goal='click Notes')
+    origin = bridge.session.actuator.position()
+    bridge.submit({'id': 103, 'op': 'camera'})
+    messages.wait(lambda item: item.get('event') == 'phase' and item['data']['phase'] == 'camera')
+    assert request(desktop, 104, 'keyboard-input', text='Hello')['ok']
+    assert request(desktop, 105, 'keyboard-input', key='Return')['ok']
+    notes = next(w for w in bridge.session.actuator.widgets.values() if w.name == 'Notes')
+    assert notes.text == 'Hello'
+    assert bridge.session.actuator.position() == origin
+    assert bridge.session.actuator.keys[-2:] == [('Return', True), ('Return', False)]
+    request(desktop, 106, 'stop')
+    messages.wait(lambda item: item.get('id') == 103)
+    assert request(desktop, 107, 'keyboard-input', text='!')['ok']
+    assert notes.text == 'Hello!'
+
+
+@pytest.mark.parametrize('payload', [dict(text='x', key='Return'), dict(text=''), dict(text='x'*9),
+    dict(key='Super'), dict(text='\n'), dict(text=True), dict()])
+def test_keyboard_rejects_invalid_input(desktop, payload):
+    request(desktop, 200, 'connect', mode='simulation')
+    assert not request(desktop, 201, 'keyboard-input', **payload)['ok']
+
+
+def test_stopped_keyboard_queue_cannot_leak_into_next_session(desktop):
+    bridge, _ = desktop
+    request(desktop, 300, 'connect', mode='simulation')
+    message = {'id': 301, 'op': 'keyboard-input', 'text': 'x', '_input_epoch': bridge.input_epoch}
+    request(desktop, 302, 'stop')
+    with pytest.raises(ValueError, match='cancelled'):
+        bridge._keyboard_input(message)
+    assert bridge.session.actuator.typed == ''
+
+
+def test_keyboard_releases_native_key_after_press_failure(desktop, monkeypatch):
+    bridge, _ = desktop
+    request(desktop, 400, 'connect', mode='simulation')
+    events = []
+    def failing_key(key, down):
+        events.append((key, down))
+        if down:
+            raise RuntimeError('native input failed')
+    monkeypatch.setattr(bridge.session.actuator, 'key', failing_key)
+    assert not request(desktop, 401, 'keyboard-input', key='Return')['ok']
+    assert events == [('Return', True), ('Return', False)]

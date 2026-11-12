@@ -1,0 +1,95 @@
+:root {
+  color-scheme: dark;
+  font-family: "IBM Plex Mono", monospace;
+  color: #dce5eb;
+  background: #10171d;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 14px 18px;
+  border: 1px solid #405462;
+  height: 100vh;
+  user-select: none;
+}
+header,
+header > div,
+.tools,
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+header strong {
+  color: #ff875b;
+  font-size: 17px;
+  letter-spacing: 2px;
+}
+header span,
+footer {
+  color: #a2b3bf;
+  font-size: 10px;
+}
+header {
+  -webkit-app-region: drag;
+}
+button {
+  -webkit-app-region: no-drag;
+  border: 1px solid #3b4c59;
+  background: #202c36;
+  color: #e2eaf0;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+}
+.tools button {
+  font-size: 11px;
+  padding: 7px 10px;
+}
+#status {
+  font-size: 11px;
+  height: 26px;
+  margin: 9px 0 3px;
+  color: #bad6e5;
+}
+#keys {
+  position: relative;
+  height: calc(100vh - 115px);
+  min-height: 160px;
+}
+.key {
+  position: absolute;
+  border: 3px solid #10171d;
+  border-radius: 7px;
+  font-size: 17px;
+}
+.key.hover,
+.key:hover {
+  background: #375666;
+  border-color: #7ac9de;
+}
+.key.pressed {
+  background: #bd4f2b;
+  border-color: #ff986c;
+}
+.key.selected {
+  color: #ffae8b;
+  background: #4c3029;
+}
+.fingertip {
+  position: absolute;
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #98e4fa;
+  box-shadow: 0 0 14px #89d6ef;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+footer {
+  margin-top: 9px;
+  font-size: 9px;
+}

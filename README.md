@@ -98,6 +98,15 @@ Stop from the indicator, the main window, the tray, or **Ctrl+Alt+Esc**. The app
 connects and moves the real pointer only when you explicitly choose a live
 session and run a task. **Try the playground** exercises the simulator instead.
 
+Hand mouse control now includes **two-finger scrolling** in both axes and a
+**three-finger hold to summon an air keyboard**. In typing mode, either hand's
+fingertips select keys by their calibrated camera position; deliberate finger
+bends press them without steering and clicking the mouse. The floating keyboard
+shows fingertip feedback and preserves the target application's focus. It
+includes calibration, Shift/Caps, symbols, editing, and navigation. Camera
+recognition accuracy still needs hardware trials; see the
+[hand scrolling and air typing guide](docs/HAND_CONTROL.md).
+
 See the [desktop app guide](ui/README.md) for controls, credentials, tests,
 Python runtime selection and Windows/Linux packaging. Packaged apps include the
 Python source but require a Python installation; Windows also needs `comtypes`.

@@ -105,23 +105,45 @@ clearly visible in good light:
 - Pinch thumb and index finger for at least 60 ms to left-click. The pointer
   stays still during the pinch; holding it produces one click. Open again to
   permit another click. There is no hand-drag gesture yet.
+- Raise index and middle fingers, curl ring/little fingers, and hold for
+  180 ms to scroll. Move away from the starting point to control wheel speed;
+  return to neutral to stop. Both axes work, with a dead zone and a maximum
+  of ten notches/second per axis. The pointer stays over the scroll target.
+- Hold index/middle/ring up with the little finger curled for 800 ms to summon
+  the **air keyboard**. **Air keyboard** and **Ctrl+Alt+K** are alternatives.
+- With the keyboard open, position either hand's index/middle/ring/little
+  fingertips over the displayed keys, then bend individual fingers to tap.
+  The system selects each key from the fingertip's settled position before the
+  bend. It supports both hands, independent release latches, Shift/Caps,
+  punctuation, space, editing/navigation, and an air-tappable **Hide** key.
+- Choose **Calibrate** and pinch at upper-left, release, then pinch at lower-right
+  to set your typing rectangle. The preview and floating keyboard share a grid
+  and show fingertip locations. The target app keeps keyboard focus.
 - Tracking loss or a frame gap over 250 ms disarms clicks. Show an open hand
   again to resume. Moving the physical mouse ends hand control.
 - **Disable camera**, **Stop**, **Escape**, the global shortcut, disconnect,
   or quitting releases the webcam. Tasks and hand control cannot run together.
 
 Frames are processed on-device in the isolated renderer. Only normalized
-fingertip coordinates and a palm-relative pinch distance cross the Python IPC
-bridge, never images or video. No camera recording is saved. The model is reused
+fingertip coordinates, a palm-relative pinch distance, a gesture label, and
+individual keyboard actions cross the Python IPC bridge, never images or video. No camera recording is saved. The model is reused
 until the app exits; the camera itself is released every time hand control ends.
 Permission, missing-camera, model-download, and tracking errors leave normal
 task execution available. The preview and controller can be tried in simulation
 before enabling live pointer input.
 
 Automated tests cover gesture state, smoothing, hysteresis, invalid input,
-camera permission failures, release during pending startup, exclusive engine
-ownership and cancellation. Browser tests stub hardware/model inference; real
+camera permission failures, release during pending startup, independent finger
+taps, calibration, scroll/keyboard latches, exclusive engine ownership and cancellation. Browser tests stub hardware/model inference; real
 webcam inference and native Windows hand input still need a hardware trial.
+
+Air typing uses a calibrated visible surface and deliberate finger bends; it
+cannot recover arbitrary invisible physical-keyboard typing. Recognition and
+sustained speed depend on camera angle, lighting, and occlusion. Hardware accuracy
+has not been benchmarked. See the [hand control guide](../docs/HAND_CONTROL.md)
+for setup, gestures, timing, calibration, and recovery.
+
+![Floating air keyboard](../docs/air-keyboard.png)
 
 ## Activity and stop controls
 
@@ -173,7 +195,8 @@ simulation and an HTTP Ollama stub. The Electron smoke test launches the actual
 sandboxed app, checks preload/IPC, executes a simulated task and cancels another.
 The default tests use no paid Cloud account and do not move the system pointer.
 An additional `CEC_TEST_LIVE_INDICATOR=1` smoke check connects the live desktop,
-verifies the always-on-top strip and cancels an unresolved target from that strip.
+verifies the always-on-top strip, types into a separate app through native input
+while checking keyboard focus, and cancels an unresolved target from that strip.
 Run that opt-in check in an isolated desktop session.
 
 Browser tests use `CHROMIUM_PATH` if supplied, the system Chromium on Linux when

@@ -37,10 +37,33 @@ let pendingGoals = [],
   cameraStarting = false;
 let cameraRun = 0,
   cameraSessionRequested = false;
+let keyboardVisible = false;
+const airTyper = new AirKeyboard.AirTyper();
+let feedbackAt = 0,
+  lastLandmarkAt = 0,
+  typingStale = false;
 const camera = new HandCamera({
   video: $("cameraVideo"),
   canvas: $("cameraCanvas"),
-  onSample: (sample) => api.hand(sample),
+  onSample: (sample) => api.hand(keyboardVisible ? null : sample),
+  onLandmarks: async (hands, now, aspect) => {
+    lastLandmarkAt = performance.now();
+    typingStale = false;
+    if (!keyboardVisible) {
+      airTyper.reset();
+      return;
+    }
+    camera.typingArea = airTyper.area;
+    const result = airTyper.update(hands, now, aspect);
+    for (const id of result.keys) {
+      if (!keyboardVisible || !camera.active) break;
+      await api.keyboardPress(id);
+    }
+    if (now - feedbackAt > 65 && keyboardVisible && camera.active) {
+      feedbackAt = now;
+      await api.keyboardFeedback({ tips: result.tips, status: result.status });
+    }
+  },
   onStatus: (status) => {
     $("cameraStatus").textContent = status;
   },
@@ -49,6 +72,24 @@ const camera = new HandCamera({
     void stopCamera();
   },
 });
+// Clear stale hover feedback even if a camera driver stops delivering frames.
+setInterval(() => {
+  if (
+    keyboardVisible &&
+    camera.active &&
+    !typingStale &&
+    performance.now() - lastLandmarkAt > 250
+  ) {
+    typingStale = true;
+    airTyper.reset();
+    void attempt(() =>
+      api.keyboardFeedback({
+        tips: [],
+        status: "Tracking paused. Extend your fingers to resume.",
+      }),
+    );
+  }
+}, 150);
 function renderQueue() {
   $("queueCard").hidden = !pendingGoals.length;
   $("queueCount").textContent = String(pendingGoals.length);
@@ -272,6 +313,11 @@ function render() {
   $("runButton").firstChild.textContent =
     submitting || ACTIVE.has(state.phase) ? "Queue task " : "Run task ";
   $("goal").disabled = handActive;
+  $("keyboardButton").disabled = !state.connected || (active && !handActive);
+  $("keyboardButton").textContent = keyboardVisible
+    ? "Hide air keyboard ×"
+    : "Air keyboard ↗";
+  $("calibrateKeyboard").hidden = !keyboardVisible || !handActive;
   $("cameraButton").disabled = !state.connected || (!handActive && active);
   $("cameraButton").textContent = handActive
     ? "Disable camera ■"
@@ -555,6 +601,20 @@ function renderHistory() {
   }
 }
 function receive(message) {
+  if (message.event === "keyboard-state") {
+    if (keyboardVisible !== message.data.visible) {
+      airTyper.reset();
+      airTyper.calibration = null;
+    }
+    keyboardVisible = message.data.visible;
+    camera.typingArea = keyboardVisible ? airTyper.area : null;
+    render();
+  } else if (message.event === "keyboard-calibrate") {
+    airTyper.calibrate();
+    $("cameraStatus").textContent =
+      "Point at the upper-left corner and hold a pinch.";
+  }
+
   if (message.event === "stop-requested") {
     cameraRun++;
     queuePaused = true;
@@ -819,6 +879,16 @@ if (!api) {
           "Global shortcut unavailable · use Stop";
       if (config.warning) toast(config.warning, true);
     })
+    .catch((error) => toast(error.message, true));
+  $("keyboardButton").addEventListener("click", () =>
+    attempt(() => api.keyboardToggle()),
+  );
+  $("calibrateKeyboard").addEventListener("click", () =>
+    attempt(() => api.keyboardCalibrate()),
+  );
+  api
+    .keyboardState()
+    .then((data) => receive({ event: "keyboard-state", data }))
     .catch((error) => toast(error.message, true));
   $("connectButton").addEventListener("click", connect);
   $("liveMode").addEventListener("click", () => setMode("live"));

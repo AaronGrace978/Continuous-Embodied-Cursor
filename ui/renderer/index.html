@@ -45,7 +45,7 @@
     </header>
     <div class="system-line">
       <span><i></i> HUMAN INTENT <b>→</b> MACHINE MOTION</span
-      ><span>120 HZ MOTOR <b>/</b> NATIVE DESKTOP <b>/</b> v0.2</span>
+      ><span>120 HZ MOTOR <b>/</b> NATIVE DESKTOP <b>/</b> v0.3</span>
     </div>
     <main>
       <section class="workspace" id="workspaceView">
@@ -311,8 +311,9 @@
             <p class="eyebrow">A LITTLE MORE PRESENT</p>
             <h2>Give it a hand.</h2>
             <p>
-              Move with your index finger. Pinch to click. Open your hand to
-              begin.
+              Point to move. Pinch to click. Raise two fingers to scroll. Hold
+              three fingers to summon the air keyboard, then bend your fingers
+              over keys to type.
             </p>
             <p class="field-note">
               Camera processing stays on this device. First use downloads
@@ -322,6 +323,12 @@
           <div class="camera-controls">
             <button id="cameraButton" class="button secondary" disabled>
               Enable camera ↗
+            </button>
+            <button id="keyboardButton" class="button secondary" disabled>
+              Air keyboard ↗
+            </button>
+            <button id="calibrateKeyboard" class="text-button" hidden>
+              Calibrate typing area
             </button>
             <span id="cameraStatus" role="status">Camera off</span>
           </div>
@@ -532,6 +539,7 @@
     </dialog>
     <div class="toast" id="toast" role="alert" hidden></div>
     <script src="icons.js"></script>
+    <script src="air-keyboard.js"></script>
     <script src="camera.js"></script>
     <script src="app.js"></script>
   </body>

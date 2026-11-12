@@ -2,8 +2,15 @@
 "use strict";
 // No frames, images or video are sent across IPC or to a model provider.
 class HandCamera {
-  constructor({ video, canvas, onSample, onStatus, onError }) {
-    Object.assign(this, { video, canvas, onSample, onStatus, onError });
+  constructor({ video, canvas, onSample, onLandmarks, onStatus, onError }) {
+    Object.assign(this, {
+      video,
+      canvas,
+      onSample,
+      onLandmarks,
+      onStatus,
+      onError,
+    });
     this.active = false;
     this.generation = 0;
     this.detector = null;
@@ -51,7 +58,7 @@ class HandCamera {
               "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
           },
           runningMode: "VIDEO",
-          numHands: 1,
+          numHands: 2,
           minHandDetectionConfidence: 0.65,
           minTrackingConfidence: 0.65,
         });
@@ -79,7 +86,7 @@ class HandCamera {
   }
   track() {
     if (!this.active) return;
-    this.frame = requestAnimationFrame(() => this.track());
+    this.frame = setTimeout(() => this.track(), 1000 / 30);
     if (
       this.inflight ||
       this.video.readyState < 2 ||
@@ -92,7 +99,15 @@ class HandCamera {
         this.video,
         performance.now(),
       );
-      const points = result.landmarks[0];
+      const hands = result.landmarks.map((points, index) => ({
+        id: result.handedness?.[index]?.[0]?.categoryName || String(index),
+        points,
+      }));
+      // Keep the chosen pointer hand stable if a second hand enters the frame.
+      const primary =
+        hands.find((hand) => hand.id === this.primaryHand) || hands[0];
+      this.primaryHand = primary?.id;
+      const points = primary?.points;
       this.draw(points);
       let sample = null;
       if (points) {
@@ -107,10 +122,25 @@ class HandCamera {
             x: Math.min(1, Math.max(0, 1 - points[8].x)),
             y: Math.min(1, Math.max(0, points[8].y)),
             pinch: Math.min(5, distance(points[4], points[8]) / palm),
+            gesture: AirKeyboard.gesture(
+              points,
+              this.video.videoHeight / this.video.videoWidth,
+            ),
           };
       }
       this.inflight = true;
-      Promise.resolve(this.onSample(sample))
+      const generation = this.generation;
+      Promise.resolve(
+        this.onLandmarks?.(
+          hands,
+          performance.now(),
+          this.video.videoHeight / this.video.videoWidth,
+        ),
+      )
+        .then(() => {
+          if (this.active && generation === this.generation)
+            return this.onSample(sample);
+        })
         .catch((error) => {
           if (this.active) this.onError(error);
         })
@@ -134,8 +164,25 @@ class HandCamera {
       canvas.height = this.video.videoHeight;
     }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (this.typingArea) {
+      const area = this.typingArea;
+      for (const key of AirKeyboard.keys) {
+        const x = (area.x + key.x * area.w) * canvas.width;
+        const y = (area.y + key.y * area.h) * canvas.height;
+        ctx.strokeStyle = "#8ce6ff";
+        ctx.strokeRect(
+          x,
+          y,
+          key.w * area.w * canvas.width,
+          key.h * area.h * canvas.height,
+        );
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "10px monospace";
+        ctx.fillText(key.label || key.id, x + 3, y + 13);
+      }
+    }
     if (!points) return;
-    for (const index of [0, 4, 8, 9]) {
+    for (const index of [0, 4, 8, 9, 12, 16, 20]) {
       ctx.beginPath();
       ctx.arc(
         (1 - points[index].x) * canvas.width,
@@ -157,7 +204,7 @@ class HandCamera {
   stop() {
     this.active = false;
     this.generation++;
-    cancelAnimationFrame(this.frame);
+    clearTimeout(this.frame);
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
     this.video.srcObject = null;

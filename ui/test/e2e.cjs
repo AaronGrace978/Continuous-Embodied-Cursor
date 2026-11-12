@@ -7,6 +7,9 @@ const os = require("node:os");
 const http = require("node:http");
 const { pathToFileURL } = require("node:url");
 const { PythonBridge } = require("../lib/bridge.cjs");
+const { KeyboardState } = require("../lib/keyboard.cjs");
+const keyboardState = new KeyboardState();
+let keyboardVisible = false;
 const { SettingsStore } = require("../lib/settings.cjs");
 (async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "cec-ui-e2e-"));
@@ -33,6 +36,7 @@ const { SettingsStore } = require("../lib/settings.cjs");
     "index.html",
     "app.js",
     "camera.js",
+    "air-keyboard.js",
     "icons.js",
     "styles.css",
     "fonts.css",
@@ -104,6 +108,32 @@ const { SettingsStore } = require("../lib/settings.cjs");
           .catch(() => {});
     });
     await page.exposeFunction("__cecInvoke", async (op, arg) => {
+      if (op === "keyboardState")
+        return {
+          visible: keyboardVisible,
+          shift: keyboardState.shift,
+          caps: keyboardState.caps,
+        };
+      if (op === "keyboardToggle") {
+        keyboardVisible = arg ?? !keyboardVisible;
+        await page.evaluate(
+          (data) => window.__cecDeliver({ event: "keyboard-state", data }),
+          { visible: keyboardVisible },
+        );
+        return { visible: keyboardVisible };
+      }
+      if (op === "keyboardCalibrate") {
+        await page.evaluate(() =>
+          window.__cecDeliver({ event: "keyboard-calibrate", data: {} }),
+        );
+        return {};
+      }
+      if (op === "keyboardFeedback") return {};
+      if (op === "keyboardPress") {
+        if (!keyboardVisible) throw new Error("Keyboard hidden");
+        const input = keyboardState.press(arg);
+        return input ? bridge.request("keyboard-input", input) : {};
+      }
       if (op === "state") return snapshot;
       if (op === "settings") return store.public();
       if (op === "saveSettings") return store.save(arg);
@@ -145,6 +175,11 @@ const { SettingsStore } = require("../lib/settings.cjs");
         "stop",
         "camera",
         "hand",
+        "keyboardState",
+        "keyboardToggle",
+        "keyboardPress",
+        "keyboardCalibrate",
+        "keyboardFeedback",
         "models",
         "testProvider",
         "exportTrace",
@@ -308,6 +343,7 @@ const { SettingsStore } = require("../lib/settings.cjs");
         void this.onSample({ x: 0.5, y: 0.5, pinch: 1 });
       };
     });
+    await bridge.request("run", { goal: "click Notes" });
     await page.click("#cameraButton");
     await page.waitForFunction(
       () =>
@@ -315,11 +351,38 @@ const { SettingsStore } = require("../lib/settings.cjs");
         "Hand control active",
     );
     assert.equal(await page.locator("#runButton").isDisabled(), true);
+    await page.click("#keyboardButton");
+    await page.waitForFunction(() =>
+      document.getElementById("keyboardButton").textContent.includes("Hide"),
+    );
+    await page.evaluate(async () => {
+      const cell = AirKeyboard.keys.find((key) => key.id === "f");
+      const x = 1 - airTyper.area.x - (cell.x + cell.w / 2) * airTyper.area.w;
+      const y = airTyper.area.y + (cell.y + cell.h / 2) * airTyper.area.h;
+      function sample(bent) {
+        const points = Array.from({ length: 21 }, () => ({
+          x: 0.99,
+          y: 0.99,
+          z: 0,
+        }));
+        points[5] = { x, y: y + 0.12, z: 0 };
+        points[6] = { x, y: y + 0.07, z: 0 };
+        points[8] = { x, y: y + (bent ? 0.13 : 0), z: 0 };
+        return [{ id: "Left", points }];
+      }
+      for (const now of [0, 60, 120])
+        await camera.onLandmarks(sample(false), now, 1);
+      for (const now of [150, 200, 230])
+        await camera.onLandmarks(sample(true), now, 1);
+    });
     await page.click("#stopButton");
     await page.waitForFunction(
       () =>
         document.getElementById("statusLabel").textContent ===
         "Connected · idle",
+    );
+    await page.waitForFunction(() =>
+      state.elements.find((el) => el.name === "Notes")?.text?.endsWith("f"),
     );
     assert.equal(await page.locator("#cameraPreview").isHidden(), true);
     await page.click("#exportTrace");

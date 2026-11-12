@@ -17,6 +17,12 @@ const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { SettingsStore } = require("./lib/settings.cjs");
 const { PythonBridge } = require("./lib/bridge.cjs");
+const { KeyboardState } = require("./lib/keyboard.cjs");
+const keyboardState = new KeyboardState();
+let keyboardVisible = false,
+  keyboardEpoch = 0,
+  keyboardPending = 0,
+  keyboardTail = Promise.resolve();
 if (process.env.CEC_USER_DATA_DIR) {
   fs.mkdirSync(process.env.CEC_USER_DATA_DIR, { recursive: true });
   app.setPath("userData", path.resolve(process.env.CEC_USER_DATA_DIR));
@@ -29,7 +35,8 @@ app.on("second-instance", () => {
 const renderer = (name) => path.join(__dirname, "renderer", name);
 const MAIN_URL = pathToFileURL(renderer("index.html")).href;
 const INDICATOR_URL = pathToFileURL(renderer("indicator.html")).href;
-let mainWindow, indicator, bridge, store, tray;
+const KEYBOARD_URL = pathToFileURL(renderer("keyboard.html")).href;
+let mainWindow, indicator, keyboard, bridge, store, tray;
 let snapshot = {
   phase: "disconnected",
   mode: "live",
@@ -41,10 +48,66 @@ let busy = false,
   shortcutAvailable = false,
   stopTimer;
 const ACTIVE = new Set(["planning", "moving", "stopping", "camera"]);
+function keyboardSnapshot() {
+  return {
+    visible: keyboardVisible,
+    shift: keyboardState.shift,
+    caps: keyboardState.caps,
+    camera: snapshot.phase === "camera",
+  };
+}
+function setKeyboardVisible(visible) {
+  if (typeof visible !== "boolean")
+    throw new Error("Choose keyboard visibility");
+  if (visible && (!snapshot.connected || (busy && snapshot.phase !== "camera")))
+    throw new Error("Connect an idle desktop or enable hand control first");
+  keyboardVisible = visible;
+  keyboardEpoch++;
+  keyboardState.reset();
+  if (visible) {
+    const area = screen.getDisplayNearestPoint(
+      screen.getCursorScreenPoint(),
+    ).workArea;
+    const width = Math.min(960, area.width - 24),
+      height = Math.min(350, area.height - 24);
+    keyboard.setBounds({
+      x: Math.round(area.x + (area.width - width) / 2),
+      y: area.y + area.height - height - 12,
+      width,
+      height,
+    });
+    keyboard.showInactive();
+  } else keyboard?.hide();
+  broadcast({ event: "keyboard-state", data: keyboardSnapshot() });
+  return keyboardSnapshot();
+}
 function broadcast(message) {
   if (message.event === "snapshot") snapshot = { ...message.data };
   if (message.event === "phase") snapshot = { ...snapshot, ...message.data };
-  for (const win of [mainWindow, indicator])
+  if (message.event === "keyboard-toggle" && snapshot.phase === "camera") {
+    // A queued gesture may arrive while Stop/disconnect is unwinding.
+    try {
+      setKeyboardVisible(!keyboardVisible);
+    } catch {
+      /* Ownership has ended. */
+    }
+  }
+  if (
+    message.event === "phase" &&
+    keyboardVisible &&
+    snapshot.phase === "camera"
+  )
+    broadcast({ event: "keyboard-state", data: keyboardSnapshot() });
+  if (message.event === "hand-stopped" && keyboardVisible)
+    setKeyboardVisible(false);
+  if (
+    ["phase", "snapshot"].includes(message.event) &&
+    keyboardVisible &&
+    (!snapshot.connected ||
+      ["planning", "moving", "stopping"].includes(snapshot.phase))
+  )
+    setKeyboardVisible(false);
+  for (const win of [mainWindow, indicator, keyboard])
     if (win && !win.isDestroyed()) win.webContents.send("cec:event", message);
   if (["phase", "snapshot"].includes(message.event)) updateIndicator();
 }
@@ -122,6 +185,7 @@ function setupBridge() {
   return instance;
 }
 async function stop() {
+  setKeyboardVisible(false);
   if (mainWindow && !mainWindow.isDestroyed())
     mainWindow.webContents.send("cec:event", {
       event: "stop-requested",
@@ -140,7 +204,10 @@ async function stop() {
 function register(channel, handler, overlay = false) {
   ipcMain.handle("cec:" + channel, async (event, ...args) => {
     const url = event.senderFrame?.url?.split("#")[0];
-    if (url !== MAIN_URL && !(overlay && url === INDICATOR_URL))
+    if (
+      url !== MAIN_URL &&
+      !(overlay && [INDICATOR_URL, KEYBOARD_URL].includes(url))
+    )
       throw new Error("Untrusted app frame");
     try {
       return await handler(...args);
@@ -214,9 +281,21 @@ app.whenReady().then(() => {
     backgroundColor: "#151b20",
     webPreferences,
   });
+  keyboard = new BrowserWindow({
+    width: 960,
+    height: 350,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: false,
+    show: false,
+    backgroundColor: "#10171d",
+    webPreferences,
+  });
   const area = screen.getPrimaryDisplay().workArea;
   indicator.setPosition(area.x + area.width - 362, area.y + 20);
-  for (const win of [mainWindow, indicator]) {
+  for (const win of [mainWindow, indicator, keyboard]) {
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     win.webContents.on("will-navigate", (event) => event.preventDefault());
     win.webContents.on("will-attach-webview", (event) =>
@@ -305,6 +384,74 @@ app.whenReady().then(() => {
       clearTimeout(stopTimer);
     }
   });
+  register("keyboard-state", keyboardSnapshot, true);
+  register(
+    "keyboard-toggle",
+    (visible) => setKeyboardVisible(visible ?? !keyboardVisible),
+    true,
+  );
+  register(
+    "keyboard-calibrate",
+    () => {
+      if (!keyboardVisible || snapshot.phase !== "camera")
+        throw new Error(
+          "Enable camera and open the keyboard before calibrating",
+        );
+      broadcast({ event: "keyboard-calibrate", data: {} });
+      return { calibrating: true };
+    },
+    true,
+  );
+  register("keyboard-feedback", (data) => {
+    if (!keyboardVisible || snapshot.phase !== "camera") return;
+    if (
+      !data ||
+      !Array.isArray(data.tips) ||
+      data.tips.length > 8 ||
+      typeof data.status !== "string" ||
+      data.status.length > 180 ||
+      data.tips.some(
+        (tip) =>
+          !tip ||
+          !Number.isFinite(tip.x) ||
+          !Number.isFinite(tip.y) ||
+          typeof tip.id !== "string",
+      )
+    )
+      throw new Error("Invalid keyboard feedback");
+    broadcast({ event: "keyboard-feedback", data });
+  });
+  register(
+    "keyboard-press",
+    (id) => {
+      if (typeof id !== "string" || keyboardPending >= 24)
+        throw new Error("Keyboard input queue is full");
+      const epoch = keyboardEpoch;
+      keyboardPending++;
+      const result = keyboardTail
+        .then(async () => {
+          if (
+            epoch !== keyboardEpoch ||
+            !keyboardVisible ||
+            !snapshot.connected ||
+            (busy && snapshot.phase !== "camera")
+          )
+            throw new Error("Keyboard input is paused");
+          if (id === "HideKeyboard") return setKeyboardVisible(false);
+          const input = keyboardState.press(id);
+          if (input) await bridge.request("keyboard-input", input, 2000);
+          broadcast({ event: "keyboard-press", data: { id } });
+          broadcast({ event: "keyboard-state", data: keyboardSnapshot() });
+          return { typed: Boolean(input) };
+        })
+        .finally(() => {
+          keyboardPending--;
+        });
+      keyboardTail = result.catch(() => {});
+      return result;
+    },
+    true,
+  );
   register("hand", (sample) => bridge.request("hand", { sample }, 2000));
   register("stop", stop, true);
   register("open-app", openApp, true);
@@ -334,6 +481,13 @@ app.whenReady().then(() => {
       void stop();
     },
   );
+  globalShortcut.register("CommandOrControl+Alt+K", () => {
+    try {
+      setKeyboardVisible(!keyboardVisible);
+    } catch {
+      /* Connect first. */
+    }
+  });
   tray = new Tray(dotIcon("idle"));
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -356,6 +510,7 @@ app.whenReady().then(() => {
   });
   mainWindow.loadFile(renderer("index.html"));
   indicator.loadFile(renderer("indicator.html"));
+  keyboard.loadFile(renderer("keyboard.html"));
 });
 app.on("before-quit", () => {
   if (quitting) return;

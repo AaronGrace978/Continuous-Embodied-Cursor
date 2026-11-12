@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Continuous Cursor · Air keyboard</title>
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="keyboard.css" />
+    <script defer src="air-keyboard.js"></script>
+    <script defer src="keyboard.js"></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <strong>AIR KEYBOARD</strong
+        ><span id="mode">Finger typing · local only</span>
+      </div>
+      <div class="tools">
+        <button id="calibrate">Calibrate</button
+        ><button id="close" aria-label="Hide keyboard">Hide ×</button>
+      </div>
+    </header>
+    <p id="status" role="status">
+      Click a text field in your app first. Extend a finger over a key, then
+      bend to tap.
+    </p>
+    <div id="keys" role="group" aria-label="Virtual keyboard"></div>
+    <footer>
+      <span>Index · middle · ring · little finger / both hands</span
+      ><span>Ctrl+Alt+K · show or hide / Ctrl+Alt+Esc · stop</span>
+    </footer>
+  </body>
+</html>

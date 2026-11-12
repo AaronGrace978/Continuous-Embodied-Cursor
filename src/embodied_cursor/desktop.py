@@ -81,6 +81,8 @@ class DesktopBridge:
         self.running = False
         self.hand_sample = None
         self.hand_received = 0.0
+        self.input_epoch = 0
+        self.inputs: queue.Queue = queue.Queue(maxsize=24)
         self.jobs: queue.Queue = queue.Queue()
         self.worker = threading.Thread(target=self._work, name="cec-desktop-engine", daemon=True)
         self.worker.start()
@@ -101,11 +103,28 @@ class DesktopBridge:
         ident = message.get("id")
         op = message.get("op")
         if op == "stop":
-            self.cancel.set()
+            with self.lock:
+                self.input_epoch += 1
+                self.cancel.set()
             if self.running:
                 self._state("stopping")
             self._reply(ident, {"stopping": self.running})
             return
+        if op == "keyboard-input":
+            try:
+                self._validate_input(message)
+                with self.lock:
+                    if not self.session or (self.running and self.cancel.is_set()):
+                        raise ValueError("Connect an idle desktop or enable hand control first")
+                    message = {**message, "_input_epoch": self.input_epoch}
+                    if self.running:
+                        if self.phase != "camera":
+                            raise ValueError("Stop the current task before typing")
+                        self.inputs.put_nowait(message)
+                        return
+            except (ValueError, queue.Full) as exc:
+                self._reply(ident, error=str(exc) or "Keyboard input queue is full")
+                return
         if op == "hand":
             try:
                 from .hand import HandSample
@@ -119,7 +138,7 @@ class DesktopBridge:
             except ValueError as exc:
                 self._reply(ident, error=str(exc))
             return
-        if op not in ("connect", "disconnect", "run", "camera", "models", "test-provider", "trace"):
+        if op not in ("connect", "disconnect", "run", "camera", "models", "test-provider", "trace", "keyboard-input"):
             self._reply(ident, error="Unsupported desktop operation")
             return
         with self.lock:
@@ -136,8 +155,48 @@ class DesktopBridge:
                 self.cancel.clear()
                 self.running = True
             elif op == "disconnect":
+                self.input_epoch += 1
                 self.cancel.set()
         self.jobs.put(message)
+
+    @staticmethod
+    def _validate_input(message):
+        text, key = message.get("text"), message.get("key")
+        if (text is None) == (key is None):
+            raise ValueError("Choose one keyboard input")
+        if text is not None and (not isinstance(text, str) or not 1 <= len(text) <= 8 or any(ord(c) < 32 for c in text)):
+            raise ValueError("Invalid keyboard text")
+        if key is not None and key not in ("BackSpace", "Tab", "Return", "Escape", "Left", "Right", "Up", "Down", "Delete"):
+            raise ValueError("Unsupported keyboard key")
+
+    def _keyboard_input(self, message):
+        self._validate_input(message)
+        if message.get("_input_epoch") != self.input_epoch or self.closed.is_set() or (self.running and self.cancel.is_set()):
+            raise ValueError("Keyboard input was cancelled")
+        actuator = self.session.actuator
+        if "text" in message:
+            actuator.type_text(message["text"])
+        else:
+            key = message["key"]
+            try:
+                actuator.key(key, True)
+            finally:
+                actuator.key(key, False)
+        return {"typed": True}
+
+    def _drain_inputs(self, cancelled=False):
+        # Called only by the owner engine thread, never by stdin/telemetry.
+        for _ in range(24):
+            try:
+                message = self.inputs.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                if cancelled or self.cancel.is_set():
+                    raise ValueError("Keyboard input was cancelled")
+                self._reply(message["id"], self._keyboard_input(message))
+            except Exception:
+                self._reply(message["id"], error="Keyboard input was cancelled" if cancelled or self.cancel.is_set() else "Keyboard input failed")
 
     def _planner(self, config):
         provider = config.get("provider", "offline")
@@ -195,6 +254,8 @@ class DesktopBridge:
                 self.session = None
 
     def _dispatch(self, op, message):
+        if op == "keyboard-input":
+            return self._keyboard_input(message)
         if op == "connect":
             mode = message.get("mode", "live")
             if mode not in ("live", "simulation"):
@@ -202,6 +263,7 @@ class DesktopBridge:
             if self.session:
                 self.session.close()
                 self.session = None
+            self.cancel.clear()
             self.mode = mode
             self._state("connecting")
             if mode == "simulation":
@@ -277,7 +339,7 @@ class DesktopBridge:
         if bounds is None:
             raise ValueError("No monitor available for hand control")
         controller = HandController(bounds)
-        self.goal = "Hand control · open hand to move, pinch to click"
+        self.goal = "Hand control · point, pinch, two fingers to scroll, three to summon keyboard"
         with self.lock:
             self.hand_sample = None
             self.hand_received = 0
@@ -285,33 +347,51 @@ class DesktopBridge:
         commanded = actual.rounded()
         last_status = ""
         reason = "cancelled"
-        while not self.cancel.wait(1 / 60) and not self.closed.is_set():
-            actual = actuator.position()
-            if actual.dist(type(actual)(*commanded)) > self.session.body.config.override_px:
-                reason = "human_override"
-                break
-            with self.lock:
-                received = self.hand_received
-                sample = self.hand_sample if time.monotonic() - received < 0.25 else None
-            # Debounce advances only with new camera evidence. Reusing a single
-            # pinch frame at motor rate must not turn a stalled stream into a click.
-            position, click, status = controller.update(sample, received if sample is not None else time.monotonic())
-            if position is not None:
-                commanded = position.rounded()
-                actuator.move_to(*commanded)
-            if click and not self.cancel.is_set():
-                try:
-                    actuator.button(1, True)
-                finally:
-                    actuator.button(1, False)
-            self._pointer = list(actuator.position().rounded())
-            if status != last_status:
-                self.emit({"event": "hand-status", "data": {"status": status}})
-                last_status = status
-        self.session.body.controller.reset(actuator.position())
-        self.goal = ""
-        self._state("ready")
-        self.emit({"event": "hand-stopped", "data": {"reason": reason}})
+        try:
+            while not self.cancel.wait(1 / 60) and not self.closed.is_set():
+                if self.mode == "simulation":
+                    self.session.body.clock.advance(1 / 60)
+                if not self.session.perception.threaded:
+                    self.session.perception.pump()
+                actual = actuator.position()
+                if actual.dist(type(actual)(*commanded)) > self.session.body.config.override_px:
+                    reason = "human_override"
+                    break
+                with self.lock:
+                    received = self.hand_received
+                    sample = self.hand_sample if time.monotonic() - received < 0.25 else None
+                # Debounce advances only with new camera evidence. Reusing a single
+                # pinch frame at motor rate must not turn a stalled stream into a click.
+                action = controller.update(sample, received if sample is not None else time.monotonic())
+                position, click, status = action[:3]
+                self._drain_inputs()
+                if not self.cancel.is_set():
+                    if any(action.scroll):
+                        actuator.scroll(*action.scroll)
+                    if action.keyboard:
+                        self.emit({"event": "keyboard-toggle", "data": {}})
+                if position is not None:
+                    commanded = position.rounded()
+                    actuator.move_to(*commanded)
+                if click and not self.cancel.is_set():
+                    try:
+                        actuator.button(1, True)
+                    finally:
+                        actuator.button(1, False)
+                self._pointer = list(actuator.position().rounded())
+                if status != last_status:
+                    self.emit({"event": "hand-status", "data": {"status": status}})
+                    last_status = status
+        except Exception:
+            reason = "input_error"
+            raise
+        finally:
+            # Close admission before draining, including on actuator failures.
+            self._state("ready")
+            self._drain_inputs(cancelled=True)
+            self.session.body.controller.reset(actuator.position())
+            self.goal = ""
+            self.emit({"event": "hand-stopped", "data": {"reason": reason}})
         return {"reason": reason}
 
     def _agent_event(self, kind, data):
