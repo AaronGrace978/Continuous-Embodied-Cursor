@@ -34,6 +34,7 @@
         <span id="statusBadge" class="status-badge" role="status"
           ><span class="status-dot"></span
           ><span id="statusLabel">Disconnected</span></span
+        ><button class="text-button" id="dockButton" disabled>Copilot ↗</button
         ><button
           class="icon-button"
           id="topSettings"
@@ -222,6 +223,7 @@
               </div>
             </div>
             <p id="sessionDescription">Connect a desktop. Take the controls.</p>
+            <p id="sessionSummary" class="field-note">No active session</p>
             <p id="companionMessage" class="companion-message" role="status">
               Ready when you are.
             </p>
@@ -285,6 +287,14 @@
               placeholder="Tell it what to do. Be specific."
               aria-describedby="goalHint"
             ></textarea
+            ><button
+              class="button secondary"
+              id="voiceButton"
+              type="button"
+              aria-pressed="false"
+              disabled
+            >
+              Voice ◉</button
             ><button class="button primary" id="runButton" disabled>
               Run task <span>↗</span>
             </button>
@@ -300,11 +310,16 @@
                 WRITE A NOTE <span>↗</span>
               </button>
             </div>
-            <span class="enter-hint">CTRL + ENTER TO RUN</span>
+            <button id="clearContext" class="text-button" disabled>
+              NEW CONTEXT</button
+            ><span class="enter-hint">CTRL + ENTER TO RUN</span>
           </div>
           <div class="command-hint" id="goalHint">
             Connect your desktop, or enter the playground.
           </div>
+          <p id="voiceStatus" class="field-note voice-note" role="status">
+            Voice off · record a command locally
+          </p>
         </section>
         <section class="presence-card" aria-label="Hand control">
           <div class="presence-copy">
@@ -510,11 +525,44 @@
               >Keep an activity indicator above other windows</span
             ></label
           ><label class="checkbox-label"
-            ><input id="minimizePreference" type="checkbox" checked /><span
-              >Minimize the app while working on a live desktop</span
+            ><input id="minimizePreference" type="checkbox" /><span
+              >Minimize on live tasks (optional)</span
             ></label
           >
         </div>
+        <label class="checkbox-label"
+          ><input id="substratesPreference" type="checkbox" /><span>
+            Read live state from Motion Substrate and ChronoSoul on this
+            computer</span
+          ></label
+        >
+        <p class="field-note">
+          Optional. Services stay independent; unavailable substrates do not
+          stop desktop control.
+        </p>
+        <details id="voiceSettings">
+          <summary>Local voice</summary>
+          <p class="field-note">
+            Speech stays on this computer. Install the optional voice extra in
+            your selected Python runtime, then prepare the English speech model
+            (about 75 MB from Hugging Face).
+          </p>
+          <button id="prepareVoice" type="button" class="button secondary">
+            Prepare local voice
+          </button>
+          <p id="voiceSetupState" class="field-note" role="status">
+            Checking the voice runtime…
+          </p>
+          <label class="checkbox-label"
+            ><input id="voiceAutoRunPreference" type="checkbox" /><span
+              >Run recognized commands automatically after recording ends</span
+            ></label
+          >
+          <p class="field-note">
+            Off by default: review the transcript and choose Run. Ctrl+Alt+Space
+            starts or finishes a recording; Ctrl+Alt+Esc stops input.
+          </p>
+        </details>
         <details>
           <summary>Runtime</summary>
           <label for="pythonPath">Python executable (optional)</label
@@ -541,6 +589,7 @@
     <script src="icons.js"></script>
     <script src="air-keyboard.js"></script>
     <script src="camera.js"></script>
+    <script src="voice.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

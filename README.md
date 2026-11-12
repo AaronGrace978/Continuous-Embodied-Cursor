@@ -72,6 +72,15 @@ the application exposing those menus and controls.
 
 ## Electron desktop app
 
+**Persistent copilot:** the desktop stays connected between instructions. Use
+**Copilot ↗** for a compact command dock, with Stop and recent task context.
+Optional **Voice ◉** records commands locally; transcripts can be reviewed or
+submitted automatically after an explicit setting change. Voice needs the
+`voice` Python extra and a prepared Whisper model. Automatic minimizing is
+opt-in. Optional local readers connect the existing
+Motion Substrate and ChronoSoul services without putting network calls in the
+motor loop. See the [copilot guide](docs/COPILOT.md).
+
 A desktop UI is available in [`ui/`](ui/README.md), with the same Windows and
 Linux backends. It includes Ollama Cloud and local Ollama connections, an offline
 playground, an animated accessibility map, task history and trace export.
@@ -88,8 +97,9 @@ npm start
 
 Open **Settings** to add your [Ollama Cloud API key](https://ollama.com/settings/keys),
 choose a model and test the connection. Cloud connects directly to `ollama.com`;
-no local Ollama server is required. Your goal and visible control text are sent
-to the model; screenshots are not. API keys use OS-backed encryption where
+no local Ollama server is required. Your goal, recent task outcomes, visible
+control text and any enabled substrate readings are sent to the model;
+screenshots are not. API keys use OS-backed encryption where
 available, with a session-only fallback rather than plaintext persistence.
 
 A floating indicator stays above other windows during live sessions and clearly

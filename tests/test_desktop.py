@@ -61,6 +61,8 @@ def test_connect_run_observe_trace_and_disconnect(desktop):
     assert export.clicks == 1
     trace = request(desktop, 3, 'trace')
     assert trace['ok'] and trace['result']['report']['status'] == 'done'
+    assert trace['result']['diagnostics']['mode'] == 'simulation'
+    assert trace['result']['diagnostics']['motorTicks'] > 0
     assert any(event['kind'] == 'press' for event in trace['result']['events'])
     assert request(desktop, 4, 'disconnect')['ok']
     assert bridge.session is None

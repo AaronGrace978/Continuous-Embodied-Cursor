@@ -9,9 +9,10 @@ class PythonBridge extends EventEmitter {
     packaged = false,
     pythonPath = "",
     environment = process.env,
+    module = "embodied_cursor.desktop",
   }) {
     super();
-    Object.assign(this, { root, environment, packaged, pythonPath });
+    Object.assign(this, { root, environment, packaged, pythonPath, module });
     this.pending = new Map();
     this.counter = 0;
     this.child = null;
@@ -65,17 +66,13 @@ class PythonBridge extends EventEmitter {
             ? path.delimiter + this.environment.PYTHONPATH
             : ""),
       };
-      const child = spawn(
-        command,
-        [...prefix, "-u", "-m", "embodied_cursor.desktop"],
-        {
-          cwd: this.root,
-          env: environment,
-          windowsHide: true,
-          stdio: ["pipe", "pipe", "pipe"],
-          shell: false,
-        },
-      );
+      const child = spawn(command, [...prefix, "-u", "-m", this.module], {
+        cwd: this.root,
+        env: environment,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: false,
+      });
       this.child = child;
       let buffer = "",
         started = false;

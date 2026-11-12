@@ -25,6 +25,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 windows = ["comtypes>=1.4.8; sys_platform == 'win32'"]
+voice = ["faster-whisper>=1.1.0,<2"]
 
 [project.scripts]
 cec = "embodied_cursor.cli:main"

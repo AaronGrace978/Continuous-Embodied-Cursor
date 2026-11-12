@@ -83,3 +83,25 @@ test("invalid local endpoints, provider names and values are rejected", () => {
   assert.throws(() => validate({ localFirst: "yes" }));
   assert.equal(validate({ speed: "fast", localFirst: false }).speed, "fast");
 });
+
+test("copilot upgrade stops automatic minimizing and preserves explicit opt-in afterward", (t) => {
+  const filename = file(t);
+  fs.writeFileSync(
+    filename,
+    JSON.stringify({ minimizeOnRun: true, model: "my-model" }),
+  );
+  const store = new SettingsStore(filename, storage, {});
+  assert.equal(store.public().minimizeOnRun, false);
+  assert.equal(store.public().model, "my-model");
+  assert.equal(store.public().substratesEnabled, false);
+  assert.equal(store.public().voiceAutoRun, false);
+  store.save({
+    minimizeOnRun: true,
+    substratesEnabled: true,
+    voiceAutoRun: true,
+  });
+  const reopened = new SettingsStore(filename, storage, {});
+  assert.equal(reopened.public().minimizeOnRun, true);
+  assert.equal(reopened.public().substratesEnabled, true);
+  assert.equal(reopened.public().voiceAutoRun, true);
+});

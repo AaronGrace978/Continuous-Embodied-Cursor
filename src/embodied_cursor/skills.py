@@ -1441,6 +1441,7 @@ def type_text(ctx: "Context", intent: Type) -> Skill:
         n = int(budget)
         if n:
             budget -= n
+            ctx.check_keyboard()
             ctx.actuator.type_text(intent.text[i : i + n])
             i += n
         yield

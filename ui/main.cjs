@@ -17,6 +17,7 @@ const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { SettingsStore } = require("./lib/settings.cjs");
 const { PythonBridge } = require("./lib/bridge.cjs");
+const { VoiceController } = require("./lib/voice.cjs");
 const { KeyboardState } = require("./lib/keyboard.cjs");
 const keyboardState = new KeyboardState();
 let keyboardVisible = false,
@@ -36,7 +37,8 @@ const renderer = (name) => path.join(__dirname, "renderer", name);
 const MAIN_URL = pathToFileURL(renderer("index.html")).href;
 const INDICATOR_URL = pathToFileURL(renderer("indicator.html")).href;
 const KEYBOARD_URL = pathToFileURL(renderer("keyboard.html")).href;
-let mainWindow, indicator, keyboard, bridge, store, tray;
+let mainWindow, indicator, keyboard, bridge, store, tray, voice;
+let voiceShortcutAvailable = false;
 let snapshot = {
   phase: "disconnected",
   mode: "live",
@@ -44,6 +46,7 @@ let snapshot = {
   running: false,
 };
 let busy = false,
+  docked = false,
   quitting = false,
   shortcutAvailable = false,
   stopTimer;
@@ -59,6 +62,8 @@ function keyboardSnapshot() {
 function setKeyboardVisible(visible) {
   if (typeof visible !== "boolean")
     throw new Error("Choose keyboard visibility");
+  if (visible && voice?.active)
+    throw new Error("Finish voice input before opening the air keyboard");
   if (visible && (!snapshot.connected || (busy && snapshot.phase !== "camera")))
     throw new Error("Connect an idle desktop or enable hand control first");
   keyboardVisible = visible;
@@ -82,6 +87,7 @@ function setKeyboardVisible(visible) {
   return keyboardSnapshot();
 }
 function broadcast(message) {
+  if (quitting) return;
   if (message.event === "snapshot") snapshot = { ...message.data };
   if (message.event === "phase") snapshot = { ...snapshot, ...message.data };
   if (message.event === "keyboard-toggle" && snapshot.phase === "camera") {
@@ -131,6 +137,7 @@ function dotIcon(color) {
   });
 }
 function updateIndicator() {
+  if (quitting) return;
   const active = ACTIVE.has(snapshot.phase);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setTitle(
@@ -144,15 +151,17 @@ function updateIndicator() {
       );
   }
   if (indicator && !indicator.isDestroyed()) {
+    indicator.setFocusable(docked && !busy);
     if (
-      snapshot.connected &&
-      store.settings.indicator &&
-      snapshot.mode === "live"
+      docked ||
+      (snapshot.connected &&
+        store.settings.indicator &&
+        snapshot.mode === "live")
     )
       indicator.showInactive();
     else indicator.hide();
   }
-  if (tray) {
+  if (tray && !tray.isDestroyed()) {
     tray.setImage(dotIcon(active ? "active" : "idle"));
     tray.setToolTip(
       `Continuous Cursor: ${snapshot.phase}${snapshot.mode === "simulation" ? " (simulation)" : ""}`,
@@ -185,6 +194,7 @@ function setupBridge() {
   return instance;
 }
 async function stop() {
+  voice?.cancel();
   setKeyboardVisible(false);
   if (mainWindow && !mainWindow.isDestroyed())
     mainWindow.webContents.send("cec:event", {
@@ -201,7 +211,7 @@ async function stop() {
   }, 1500);
   return { stopping: true };
 }
-function register(channel, handler, overlay = false) {
+function register(channel, handler, overlay = false, withSender = false) {
   ipcMain.handle("cec:" + channel, async (event, ...args) => {
     const url = event.senderFrame?.url?.split("#")[0];
     if (
@@ -210,7 +220,9 @@ function register(channel, handler, overlay = false) {
     )
       throw new Error("Untrusted app frame");
     try {
-      return await handler(...args);
+      return await (withSender
+        ? handler(event.sender.id, ...args)
+        : handler(...args));
     } catch (error) {
       const key = store.config().apiKey;
       throw new Error(
@@ -222,14 +234,62 @@ function register(channel, handler, overlay = false) {
   });
 }
 function openApp() {
+  if (voice?.active) voice.cancel();
+  docked = false;
+  indicator.setSize(342, 74);
+  indicator.setFocusable(false);
+  broadcast({ event: "dock", data: { docked } });
+  updateIndicator();
   mainWindow.show();
   mainWindow.focus();
+}
+function openDock() {
+  if (voice?.active) voice.cancel();
+  if (!snapshot.connected)
+    throw new Error("Connect a desktop or playground first");
+  docked = true;
+  const area = screen.getDisplayNearestPoint(
+    screen.getCursorScreenPoint(),
+  ).workArea;
+  const width = Math.min(460, area.width - 24);
+  indicator.setBounds({
+    x: area.x + area.width - width - 12,
+    y: area.y + 12,
+    width,
+    height: 292,
+  });
+  broadcast({ event: "dock", data: { docked } });
+  mainWindow.hide();
+  updateIndicator();
+  indicator.show();
+  return { docked };
 }
 app.whenReady().then(() => {
   if (!hasInstanceLock) return;
   store = new SettingsStore(
     path.join(app.getPath("userData"), "settings.json"),
     safeStorage,
+  );
+  voice = new VoiceController(
+    () =>
+      new PythonBridge({
+        root: app.isPackaged
+          ? process.resourcesPath
+          : path.resolve(__dirname, ".."),
+        packaged: app.isPackaged,
+        pythonPath: store.settings.pythonPath,
+        module: "embodied_cursor.voice",
+        environment: {
+          ...process.env,
+          CEC_VOICE_MODEL_DIR:
+            process.env.CEC_VOICE_MODEL_DIR ||
+            path.join(app.getPath("userData"), "voice-model"),
+        },
+      }),
+    () => {
+      broadcast({ event: "voice-reset", data: {} });
+      broadcast({ event: "voice-state", data: { active: false } });
+    },
   );
   const webPreferences = {
     preload: path.join(__dirname, "preload.cjs"),
@@ -253,13 +313,20 @@ app.whenReady().then(() => {
     show: false,
     webPreferences,
   });
-  const cameraPermission = (contents, permission, details) =>
-    contents === mainWindow?.webContents &&
-    contents.getURL().split("#")[0] === MAIN_URL &&
-    permission === "media" &&
-    (details?.mediaTypes
-      ? details.mediaTypes.length === 1 && details.mediaTypes[0] === "video"
-      : details?.mediaType === "video");
+  const cameraPermission = (contents, permission, details) => {
+    if (permission !== "media") return false;
+    const types =
+      details?.mediaTypes || (details?.mediaType ? [details.mediaType] : []);
+    if (types.length !== 1) return false;
+    const url = contents.getURL().split("#")[0];
+    if (types[0] === "video")
+      return contents === mainWindow?.webContents && url === MAIN_URL;
+    return (
+      types[0] === "audio" &&
+      [MAIN_URL, INDICATOR_URL].includes(url) &&
+      voice.permits(contents.id)
+    );
+  };
   mainWindow.webContents.session.setPermissionRequestHandler(
     (contents, permission, callback, details) => {
       callback(cameraPermission(contents, permission, details));
@@ -311,15 +378,23 @@ app.whenReady().then(() => {
       busy,
       platform: process.platform,
       shortcutAvailable,
+      docked,
+      voiceShortcutAvailable,
+      voiceActive: voice.active,
+      voiceAutoRun: store.settings.voiceAutoRun,
     }),
     true,
   );
   register("settings", () => store.public());
   register("save-settings", async (value) => {
-    if (busy) throw new Error("Stop the current task before changing settings");
+    if (busy || voice.active)
+      throw new Error(
+        "Finish the task or voice recording before changing settings",
+      );
     const oldPython = store.settings.pythonPath;
     const result = store.save(value);
     if (oldPython !== store.settings.pythonPath) {
+      voice.cancel();
       bridge.close();
       bridge.kill();
       setupBridge();
@@ -329,12 +404,20 @@ app.whenReady().then(() => {
       });
     }
     updateIndicator();
+    if (bridge.child)
+      await bridge.request("configure-substrates", {
+        enabled: store.settings.substratesEnabled,
+      });
     return result;
   });
   register("connect", async (mode) => {
     if (!["live", "simulation"].includes(mode) || busy)
       throw new Error("Choose a mode while no task is running");
-    return bridge.request("connect", { mode });
+    const result = await bridge.request("connect", { mode });
+    await bridge.request("configure-substrates", {
+      enabled: store.settings.substratesEnabled,
+    });
+    return result;
   });
   register("disconnect", async () => {
     await stop();
@@ -352,29 +435,79 @@ app.whenReady().then(() => {
   register("test-provider", () =>
     bridge.request("test-provider", { config: store.config() }, 55000),
   );
-  register("run", async (goal) => {
-    if (busy || !snapshot.connected)
-      throw new Error(
-        "Connect a desktop and wait for the current task to finish",
-      );
-    if (typeof goal !== "string" || !goal.trim() || goal.length > 4000)
-      throw new Error("Enter a goal of up to 4,000 characters");
-    busy = true;
-    if (store.settings.minimizeOnRun && snapshot.mode === "live")
-      mainWindow.minimize();
-    try {
-      return await bridge.request(
-        "run",
-        { goal, config: store.config() },
-        600000,
-      );
-    } finally {
-      busy = false;
-      clearTimeout(stopTimer);
-    }
-  });
+  register("dock", openDock);
+  register(
+    "voice",
+    async (owner, op, payload) => {
+      if (op === "begin" && (busy || !snapshot.connected))
+        throw new Error(
+          "Connect a desktop and finish the current task before recording",
+        );
+      try {
+        return await voice.handle(owner, op, payload);
+      } finally {
+        broadcast({ event: "voice-state", data: { active: voice.active } });
+      }
+    },
+    true,
+    true,
+  );
+  register(
+    "clear-context",
+    () => {
+      if (busy)
+        throw new Error("Stop the current task before clearing context");
+      return bridge.request("clear-context");
+    },
+    true,
+  );
+  register(
+    "run",
+    async (goal, options) => {
+      if (options?.voiceToken !== undefined &&
+          (!store.settings.voiceAutoRun || options.voiceToken !== voice.epoch))
+        throw new Error(
+          "Automatic voice execution is off or that command was cancelled. Review the transcript and choose Run",
+        );
+      if (busy || voice.active || !snapshot.connected)
+        throw new Error(
+          "Connect a desktop and wait for the current task to finish",
+        );
+      if (typeof goal !== "string" || !goal.trim() || goal.length > 4000)
+        throw new Error("Enter a goal of up to 4,000 characters");
+      busy = true;
+      indicator.setFocusable(false);
+      indicator.blur();
+      mainWindow.blur();
+      if (store.settings.minimizeOnRun && snapshot.mode === "live")
+        mainWindow.minimize();
+      try {
+        return await bridge.request(
+          "run",
+          {
+            goal,
+            config: store.config(),
+            controllerWindows: [mainWindow, indicator, keyboard].map((win) => {
+              const handle = win.getNativeWindowHandle();
+              return (
+                handle.length >= 8
+                  ? handle.readBigUInt64LE()
+                  : BigInt(handle.readUInt32LE())
+              ).toString();
+            }),
+          },
+          600000,
+        );
+      } finally {
+        busy = false;
+        clearTimeout(stopTimer);
+        updateIndicator();
+      }
+    },
+    true,
+  );
   register("camera", async () => {
-    if (busy || !snapshot.connected)
+    if (busy || voice.active || !snapshot.connected)
       throw new Error("Connect a desktop and finish the current task first");
     busy = true;
     try {
@@ -481,6 +614,21 @@ app.whenReady().then(() => {
       void stop();
     },
   );
+  voiceShortcutAvailable = globalShortcut.register(
+    "CommandOrControl+Alt+Space",
+    () => {
+      if (busy || !snapshot.connected) return;
+      const owner = [mainWindow, indicator].find(
+        (win) => win?.webContents.id === voice.owner,
+      );
+      const target = owner || (docked ? indicator : mainWindow);
+      if (target && !target.isDestroyed())
+        target.webContents.send("cec:event", {
+          event: "voice-toggle",
+          data: {},
+        });
+    },
+  );
   globalShortcut.register("CommandOrControl+Alt+K", () => {
     try {
       setKeyboardVisible(!keyboardVisible);
@@ -515,11 +663,13 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
   if (quitting) return;
   quitting = true;
+  voice?.cancel();
   globalShortcut.unregisterAll();
   clearTimeout(stopTimer);
   bridge?.close();
   const current = bridge;
   setTimeout(() => current?.kill(), 1000).unref();
   tray?.destroy();
+  tray = null;
 });
 app.on("window-all-closed", () => app.quit());

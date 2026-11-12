@@ -84,7 +84,7 @@ class Agent:
         if self.on_event is not None:
             self.on_event(kind, data)
 
-    def run(self, goal: str, cancel: threading.Event | None = None) -> Report:
+    def run(self, goal: str, cancel: threading.Event | None = None, context: str | Callable[[], str] = "") -> Report:
         body = self.body
         clock = body.clock
         report = Report(goal, "exhausted")
@@ -99,7 +99,8 @@ class Agent:
             started = clock.now()
             self._say("thinking", round=round_no)
             try:
-                plan: Plan = self.planner.plan(Episode(goal, observation, list(report.outcomes), surprise))
+                live_context = context() if callable(context) else context
+                plan: Plan = self.planner.plan(Episode(goal, observation, list(report.outcomes), surprise, live_context))
             except PlannerError as exc:
                 report.status, report.reason = "failed", f"planner: {exc}"
                 return report

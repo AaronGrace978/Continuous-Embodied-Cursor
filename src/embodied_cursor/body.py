@@ -160,6 +160,7 @@ class Context:
             self.emit("release", button=button, at=list(self.pos.rounded()))
 
     def key_down(self, name: str) -> None:
+        self.check_keyboard()
         self.actuator.key(name, True)
         self._keys.append(name)
 
@@ -169,8 +170,13 @@ class Context:
             self._keys.remove(name)
 
     def tap(self, name: str) -> None:
+        self.check_keyboard()
         self.actuator.key(name, True)
         self.actuator.key(name, False)
+
+    def check_keyboard(self) -> None:
+        if self._body.before_keyboard is not None:
+            self._body.before_keyboard()
 
     def watch_reveal(self, trigger: UIElement, how: str) -> None:
         self._body._watch_reveal(trigger, how)
@@ -210,6 +216,7 @@ class Body:
         self.config = config or BodyConfig()
         self.trace = trace if trace is not None else Trace()
         self.listeners: list[Callable[[dict[str, Any]], None]] = []
+        self.before_keyboard: Callable[[], None] | None = None
         self.controller = MotionController(actuator.position(), motor, self.world.monitors)
         self.ctx = Context(self)
         self._period = 1.0 / self.config.hz

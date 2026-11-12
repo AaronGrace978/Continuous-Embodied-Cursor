@@ -1515,3 +1515,12 @@ summary {
     transition: none;
   }
 }
+
+.voice-note {
+  margin: 0 24px 15px;
+  min-height: 18px;
+}
+#voiceButton[aria-pressed="true"] {
+  border-color: #ff6a3d;
+  color: #ff9b71;
+}

@@ -320,6 +320,11 @@ class X11Actuator:
 
     # pointer
 
+    def foreground_window(self) -> int | None:
+        with self._c.lock:
+            prop = self._c.property(self._c.root, "_NET_ACTIVE_WINDOW", max_longs=1)
+            return int(prop[1][0]) if prop and prop[0] == 32 and prop[1] else None
+
     def position(self) -> Vec2:
         c = self._c
         root, child = c_ulong(), c_ulong()

@@ -68,6 +68,8 @@ def _user32():
     api.GetWindow.restype = W.HWND
     api.GetAncestor.argtypes = [W.HWND, C.c_uint]
     api.GetAncestor.restype = W.HWND
+    api.GetForegroundWindow.argtypes = []
+    api.GetForegroundWindow.restype = W.HWND
     api.SetThreadDpiAwarenessContext.argtypes = [C.c_void_p]
     api.SetThreadDpiAwarenessContext.restype = C.c_void_p
     return api
@@ -103,6 +105,9 @@ class WindowsActuator:
         if not self.api.GetCursorPos(C.byref(p)):
             raise BackendUnavailable('GetCursorPos failed; an interactive desktop is required')
         return Vec2(p.x, p.y)
+
+    def foreground_window(self):
+        return self.api.GetForegroundWindow()
 
     def move_to(self, x, y):
         if not self.api.SetCursorPos(round(x), round(y)):

@@ -6,7 +6,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'"
     />
-    <title>Cursor activity</title>
+    <title>CEC Copilot</title>
     <link rel="stylesheet" href="indicator.css" />
   </head>
   <body>
@@ -17,6 +17,33 @@
         ><span id="detail">Continuous Cursor</span></button
       ><button id="stop" aria-label="Stop cursor">■ Stop</button>
     </div>
+    <section id="copilot" hidden aria-label="Persistent copilot">
+      <p id="sessionInfo">Session active</p>
+      <form id="commandForm">
+        <label for="dockGoal">What should I do next?</label>
+        <div class="command">
+          <input
+            id="dockGoal"
+            maxlength="4000"
+            autocomplete="off"
+            placeholder="Click Export, then fill Notes with hello"
+          /><button id="send" type="submit">Run ↗</button>
+        </div>
+      </form>
+      <p id="feedback" role="status" aria-live="polite">
+        Ready for your next instruction.
+      </p>
+      <footer>
+        <span id="substrateStatus">Substrates off</span
+        ><button id="clearContext">New context</button>
+      </footer>
+    </section>
+    <div id="voiceControls" hidden>
+      <button id="voiceButton" type="button" aria-pressed="false">
+        Voice ◉</button
+      ><span id="voiceStatus" role="status">Local speech · off</span>
+    </div>
+    <script src="voice.js"></script>
     <script src="indicator.js"></script>
   </body>
 </html>

@@ -7,6 +7,7 @@ const os = require("node:os");
 const http = require("node:http");
 const { pathToFileURL } = require("node:url");
 const { PythonBridge } = require("../lib/bridge.cjs");
+const { VoiceController } = require("../lib/voice.cjs");
 const { KeyboardState } = require("../lib/keyboard.cjs");
 const keyboardState = new KeyboardState();
 let keyboardVisible = false;
@@ -16,6 +17,15 @@ const { SettingsStore } = require("../lib/settings.cjs");
   const results = path.resolve(__dirname, "../test-results");
   fs.mkdirSync(results, { recursive: true });
   const bridge = new PythonBridge({ root: path.resolve(__dirname, "../..") });
+  // Decode/model inference is stubbed; capture uses synthetic PCM, not a microphone.
+  let voiceText = "fill Notes with spoken command";
+  const voice = new VoiceController(() => ({
+    request: async (op) =>
+      op === "transcribe"
+        ? { text: voiceText }
+        : { available: true, prepared: true },
+    kill() {},
+  }));
   const store = new SettingsStore(
     path.join(folder, "settings.json"),
     { isEncryptionAvailable: () => false },
@@ -36,6 +46,10 @@ const { SettingsStore } = require("../lib/settings.cjs");
     "index.html",
     "app.js",
     "camera.js",
+    "voice.js",
+    "indicator.html",
+    "indicator.js",
+    "indicator.css",
     "air-keyboard.js",
     "icons.js",
     "styles.css",
@@ -108,6 +122,7 @@ const { SettingsStore } = require("../lib/settings.cjs");
           .catch(() => {});
     });
     await page.exposeFunction("__cecInvoke", async (op, arg) => {
+      if (op === "voice") return voice.handle(1, arg.op, arg.payload);
       if (op === "keyboardState")
         return {
           visible: keyboardVisible,
@@ -134,11 +149,16 @@ const { SettingsStore } = require("../lib/settings.cjs");
         const input = keyboardState.press(arg);
         return input ? bridge.request("keyboard-input", input) : {};
       }
-      if (op === "state") return snapshot;
-      if (op === "settings") return store.public();
+      if (op === "state")
+        return { ...snapshot, voiceAutoRun: store.settings.voiceAutoRun };
+      if (op === "settings") {
+        if (snapshot.docked) throw Error("Dock may read state only");
+        return store.public();
+      }
       if (op === "saveSettings") return store.save(arg);
       if (op === "connect") return bridge.request("connect", { mode: arg });
       if (op === "disconnect") return bridge.request("disconnect");
+      if (op === "clearContext") return bridge.request("clear-context");
       if (op === "run")
         return bridge.request("run", { goal: arg, config: store.config() });
       if (op === "stop") return bridge.request("stop");
@@ -171,6 +191,7 @@ const { SettingsStore } = require("../lib/settings.cjs");
         "saveSettings",
         "connect",
         "disconnect",
+        "clearContext",
         "run",
         "stop",
         "camera",
@@ -186,6 +207,8 @@ const { SettingsStore } = require("../lib/settings.cjs");
         "openExternal",
       ])
         window.cursor[op] = (arg) => window.__cecInvoke(op, arg);
+      window.cursor.voice = (op, payload) =>
+        window.__cecInvoke("voice", { op, payload });
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
     await page.waitForFunction(
@@ -202,7 +225,7 @@ const { SettingsStore } = require("../lib/settings.cjs");
     await page.waitForFunction(
       () =>
         document.getElementById("statusLabel").textContent ===
-        "Connected · idle",
+        "Session active · ready",
     );
     await page.waitForFunction(
       () => document.querySelectorAll("#mapSvg rect").length >= 6,
@@ -379,7 +402,7 @@ const { SettingsStore } = require("../lib/settings.cjs");
     await page.waitForFunction(
       () =>
         document.getElementById("statusLabel").textContent ===
-        "Connected · idle",
+        "Session active · ready",
     );
     await page.waitForFunction(() =>
       state.elements.find((el) => el.name === "Notes")?.text?.endsWith("f"),
@@ -391,6 +414,96 @@ const { SettingsStore } = require("../lib/settings.cjs");
     );
     await page.screenshot({
       path: path.join(results, "dashboard.png"),
+      fullPage: true,
+    });
+    // Voice-to-command routing: first review, then opt into execution on finish.
+    const beforeVoice = await page.evaluate(
+      () => state.elements.find((el) => el.name === "Notes").text,
+    );
+    const installVoiceHardware = () => {
+      window.__voiceStops = 0;
+      voiceCapture.getUserMedia = async () => ({
+        getTracks: () => [{ stop: () => window.__voiceStops++ }],
+      });
+      voiceCapture.AudioContextClass = class {
+        constructor() {
+          this.sampleRate = 16000;
+          this.destination = {};
+        }
+        node() {
+          return { connect() {}, disconnect() {} };
+        }
+        createMediaStreamSource() {
+          return this.node();
+        }
+        createScriptProcessor() {
+          return (window.__voiceProcessor = this.node());
+        }
+        createGain() {
+          return { ...this.node(), gain: { value: 1 } };
+        }
+        async resume() {}
+        async close() {}
+      };
+    };
+    await page.evaluate(installVoiceHardware);
+    await page.click("#voiceButton");
+    await page.waitForFunction(() => voiceCapture.phase === "recording");
+    assert.equal(await page.locator("#runButton").isDisabled(), true);
+    await page.evaluate(() =>
+      window.__voiceProcessor.onaudioprocess({
+        inputBuffer: {
+          getChannelData: () => new Float32Array(8000).fill(0.1),
+        },
+      }),
+    );
+    await page.click("#voiceButton");
+    await page.waitForFunction(
+      () =>
+        document.getElementById("goal").value ===
+        "fill Notes with spoken command",
+    );
+    assert.equal(
+      await page.evaluate(
+        () => state.elements.find((el) => el.name === "Notes").text,
+      ),
+      beforeVoice,
+    );
+    assert.equal(await page.evaluate(() => window.__voiceStops), 1);
+    await page.click("#runButton");
+    await page.waitForFunction(
+      () =>
+        state.elements.find((el) => el.name === "Notes").text ===
+        "spoken command",
+    );
+    await page.waitForFunction(() => !submitting);
+    await page.click("#topSettings");
+    await page.click("#voiceSettings > summary");
+    await page.check("#voiceAutoRunPreference");
+    await page.click("#settingsForm button[type=submit]");
+    voiceText = "click Export";
+    const voiceHistory = Number(
+      await page.locator("#historyCount").textContent(),
+    );
+    await page.click("#voiceButton");
+    await page.waitForFunction(() => voiceCapture.phase === "recording");
+    await page.evaluate(() =>
+      window.__voiceProcessor.onaudioprocess({
+        inputBuffer: {
+          getChannelData: () => new Float32Array(8000).fill(0.1),
+        },
+      }),
+    );
+    await page.click("#voiceButton");
+    await page.waitForFunction(
+      (count) =>
+        Number(document.getElementById("historyCount").textContent) ===
+        count + 1,
+      voiceHistory,
+    );
+    await page.waitForFunction(() => !submitting);
+    await page.screenshot({
+      path: path.join(results, "voice.png"),
       fullPage: true,
     });
     await page.click("#topSettings");
@@ -413,12 +526,38 @@ const { SettingsStore } = require("../lib/settings.cjs");
         document.getElementById("statusLabel").textContent === "Disconnected",
     );
     assert.equal(await page.locator("#runButton").isDisabled(), true);
+    await bridge.request("connect", { mode: "simulation" });
+    snapshot.docked = true;
+    await page.goto(`http://127.0.0.1:${server.address().port}/indicator.html`);
+    await page.waitForSelector("#copilot:not([hidden])");
+    await page.evaluate(() => window.cursor.voice("cancel"));
+    await page.evaluate(installVoiceHardware);
+    await page.click("#voiceButton");
+    await page.waitForFunction(() => voiceCapture.phase === "recording");
+    await page.evaluate(() =>
+      window.__voiceProcessor.onaudioprocess({
+        inputBuffer: {
+          getChannelData: () => new Float32Array(8000).fill(0.1),
+        },
+      }),
+    );
+    await page.click("#voiceButton");
+    await page.waitForFunction(() =>
+      document
+        .getElementById("sessionInfo")
+        .textContent.includes("1 tasks finished"),
+    );
+    await page.waitForFunction(() => !document.getElementById("send").disabled);
+    assert.equal(await page.locator("#dockGoal").inputValue(), "click Export");
+    await page.screenshot({ path: path.join(results, "copilot-voice.png") });
+    await bridge.request("disconnect");
     assert.deepEqual(errors, []);
     console.log(
       "PASS: Python-backed UI, planning, queued goals, pause/resume, camera lifecycle, cancellation, history, export, key storage and disconnect.",
     );
     console.log("Screenshots: ui/test-results/{welcome,active,dashboard}.png");
   } finally {
+    voice.cancel();
     bridge.close();
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

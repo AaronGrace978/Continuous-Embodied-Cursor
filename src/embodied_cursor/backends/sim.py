@@ -603,6 +603,7 @@ class SimDesktop:
         self.focus: Widget | None = None
         self.log: list[tuple[float, str, str, dict]] = []
         self.keys: list[tuple[str, bool]] = []
+        self._held_keys: set[str] = set()
         self.typed = ""
         self._ids = itertools.count(1)
         self._grab: Widget | None = None
@@ -771,7 +772,13 @@ class SimDesktop:
 
     def key(self, key: str, down: bool) -> None:
         self.keys.append((key, down))
-        held = {k.lower() for k, d in self.keys if d} - {k.lower() for k, d in self.keys if not d}
+        # A released key can be pressed again in the same persistent session.
+        # The event log is history, not the current modifier state.
+        if down:
+            self._held_keys.add(key.lower())
+        else:
+            self._held_keys.discard(key.lower())
+        held = self._held_keys
         if down and key in ("Return", "Enter") and self.focus is not None:
             self.focus.on_text("\n")
         if down and key.lower() == "a" and held & {"ctrl", "control"} and isinstance(self.focus, TextField):

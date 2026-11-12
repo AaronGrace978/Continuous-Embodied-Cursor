@@ -88,3 +88,108 @@ button:focus-visible {
     animation: none !important;
   }
 }
+
+[hidden] {
+  display: none !important;
+}
+#copilot {
+  padding: 0 14px 12px;
+  border: 1px solid #52646f;
+  border-top: 0;
+  height: 172px;
+}
+#sessionInfo,
+#substrateStatus {
+  font-size: 9px;
+  color: #a2b9c5;
+}
+#sessionInfo {
+  margin: 0;
+  padding: 7px 0 10px;
+}
+label {
+  display: block;
+  font-size: 10px;
+  margin-bottom: 7px;
+}
+.command {
+  display: flex;
+  gap: 6px;
+}
+input {
+  min-width: 0;
+  flex: 1;
+  background: #0c1216;
+  color: #e1e8eb;
+  border: 1px solid #52646f;
+  padding: 10px 8px;
+  font: inherit;
+  font-size: 10px;
+}
+#send {
+  background: #ff6a3d;
+  color: #151b20;
+  padding: 8px 12px;
+  font-size: 10px;
+}
+#feedback {
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 10px 0;
+  min-height: 30px;
+  max-height: 30px;
+  overflow: auto;
+}
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#clearContext {
+  font-size: 9px;
+  color: #b4c8d2;
+  background: none;
+  text-decoration: underline;
+  padding: 3px;
+}
+input:focus-visible {
+  outline: 2px solid #9cddf6;
+}
+button:disabled,
+input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+body.docked #detail {
+  max-width: 300px;
+}
+
+#voiceControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 7px 14px;
+  border: 1px solid #52646f;
+  border-top: 0;
+}
+#voiceButton {
+  color: #e1e8eb;
+  background: #26343d;
+  border: 1px solid #69838a;
+  padding: 6px 8px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+#voiceButton[aria-pressed="true"] {
+  border-color: #ff6a3d;
+  color: #ff9b71;
+}
+#voiceStatus {
+  color: #a2b9c5;
+  font-size: 9px;
+  max-height: 30px;
+  overflow: auto;
+  line-height: 1.5;
+}

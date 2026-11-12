@@ -30,6 +30,15 @@ separate real-time controller decides HOW to move. You never see pixels and \
 never give coordinates: you name UI elements and the controller finds them, \
 follows them if they move, waits if they are covered, and reports back.
 
+You are part of a persistent desktop session. SESSION CONTEXT contains earlier \
+instructions and their actual outcomes. Use it to interpret follow-ups, but \
+act only on the current GOAL. Re-check targets against the current SCREEN: \
+old observations are not current evidence. Prefer an observed element's ID \
+(selector {"id":"..."}) to disambiguate it. When typing, name the target field \
+so focus can be acquired. Substrate affect and motion are companion state, \
+not screen coordinates, permission to act, or evidence of task success. Do not \
+invent a target when the screen does not expose it; explain what is missing.
+
 Each turn you get the goal, a listing of what is on screen, and the outcomes \
 of what was tried. Answer with ONE JSON object and nothing else:
 
@@ -106,6 +115,8 @@ def parse_reply(text: str) -> Plan:
 
 def render_episode(episode: Episode, history_limit: int = 12) -> str:
     lines = [f"GOAL: {episode.goal}", "", "SCREEN:", episode.observation.text()]
+    if episode.context:
+        lines += ["", "SESSION CONTEXT (history and state, not instructions):", episode.context]
     if episode.history:
         lines += ["", "TRIED SO FAR:"]
         skipped = len(episode.history) - history_limit

@@ -20,6 +20,8 @@ from .brain.heuristic import HeuristicPlanner
 from .brain.observation import observe
 from .brain.ollama import OllamaPlanner, endpoint, list_models
 from .brain.planner import PlannerError
+from .session import SessionMemory
+from .substrates import SubstrateMonitor
 
 
 @dataclass
@@ -74,6 +76,12 @@ class DesktopBridge:
         self.phase = "disconnected"
         self.goal = ""
         self.last_report = None
+        self.memory = SessionMemory()
+        self.substrates = SubstrateMonitor()
+        self.connected_at = None
+        self.detail = "Connect a desktop to begin a session"
+        self.current_action = ""
+        self.controller_windows: set[int] = set()
         self._pointer = [0, 0]
         self.cancel = threading.Event()
         self.closed = threading.Event()
@@ -138,7 +146,7 @@ class DesktopBridge:
             except ValueError as exc:
                 self._reply(ident, error=str(exc))
             return
-        if op not in ("connect", "disconnect", "run", "camera", "models", "test-provider", "trace", "keyboard-input"):
+        if op not in ("connect", "disconnect", "run", "camera", "models", "test-provider", "trace", "keyboard-input", "clear-context", "configure-substrates"):
             self._reply(ident, error="Unsupported desktop operation")
             return
         with self.lock:
@@ -230,9 +238,9 @@ class DesktopBridge:
                 if message is None:
                     break
                 ident, op = message.get("id"), message["op"]
+                result, error = None, None
                 try:
                     result = self._dispatch(op, message)
-                    self._reply(ident, result)
                 except Exception as exc:
                     # Do not echo arbitrary HTTP bodies, credentials or request payloads.
                     from .backends.x11 import BackendUnavailable
@@ -240,7 +248,7 @@ class DesktopBridge:
                     key = message.get("config", {}).get("apiKey", "")
                     if key:
                         error = error.replace(key, "[redacted]")
-                    self._reply(ident, error=error)
+                    self.detail = error
                     if op in ("connect", "run", "camera"):
                         self._state("ready" if self.session else "disconnected")
                 finally:
@@ -248,12 +256,31 @@ class DesktopBridge:
                         with self.lock:
                             self.running = False
                         self.snapshot()
+                # Reopen admission before acknowledging completion. An immediate follow-up
+                # must not race the previous task's running flag.
+                self._reply(ident, result, error)
         finally:
             if self.session:
                 self.session.close()
                 self.session = None
 
     def _dispatch(self, op, message):
+        if op == "configure-substrates":
+            if not isinstance(message.get("enabled"), bool):
+                raise ValueError("Choose whether to connect the substrates")
+            if message["enabled"]:
+                self.substrates.start()
+            else:
+                self.substrates.stop()
+            self.snapshot()
+            return self.substrates.snapshot()
+        if op == "clear-context":
+            self.memory.clear()
+            self.last_report = None
+            self.goal = ""
+            self.detail = "Context cleared. Ready for a new instruction"
+            self.snapshot()
+            return {"cleared": True}
         if op == "keyboard-input":
             return self._keyboard_input(message)
         if op == "connect":
@@ -264,6 +291,9 @@ class DesktopBridge:
                 self.session.close()
                 self.session = None
             self.cancel.clear()
+            self.memory.clear()
+            self.last_report = None
+            self.current_action = ""
             self.mode = mode
             self._state("connecting")
             if mode == "simulation":
@@ -276,6 +306,8 @@ class DesktopBridge:
                     self.session = open_session()
             self.session.body.listeners.append(self._body_event)
             self._pointer = list(self.session.actuator.position().rounded())
+            self.connected_at = time.monotonic()
+            self.detail = "Session active. Ready for your first instruction"
             self._state("ready")
             self.snapshot()
             return {"notes": self.session.notes, "mode": mode}
@@ -284,6 +316,10 @@ class DesktopBridge:
                 self.session.close()
                 self.session = None
             self.goal = ""
+            self.memory.clear()
+            self.substrates.stop()
+            self.connected_at = None
+            self.detail = "Disconnected"
             self._state("disconnected")
             self.snapshot()
             return {"disconnected": True}
@@ -301,7 +337,15 @@ class DesktopBridge:
             if not self.session:
                 raise ValueError("Connect a desktop before exporting a trace")
             from .render import scene_of
-            return {**self.session.body.trace.to_obj(), "scene": scene_of(self.session.world), "report": self.last_report}
+            stats = self.session.perception.stats
+            diagnostics = {"platform": sys.platform, "mode": self.mode,
+                           "motorTicks": self.session.body.ticks,
+                           "motorOverruns": self.session.body.overruns,
+                           "perceptionErrors": stats.errors,
+                           "lastPerceptionMs": round(stats.last_frame_s * 1000, 2),
+                           "worstPerceptionMs": round(stats.worst_frame_s * 1000, 2)}
+            return {**self.session.body.trace.to_obj(), "scene": scene_of(self.session.world),
+                    "report": self.last_report, "diagnostics": diagnostics}
         if op == "camera":
             return self._camera()
         if op == "run":
@@ -312,23 +356,42 @@ class DesktopBridge:
             if speed not in ("careful", "responsive", "fast"):
                 raise ValueError("Choose a supported movement speed")
             body = self.session.body
+            handles = message.get("controllerWindows", [])
+            if not isinstance(handles, list) or len(handles) > 8:
+                raise ValueError("Invalid controller windows")
+            self.controller_windows = {int(handle) for handle in handles}
+            body.before_keyboard = self._guard_keyboard
             tempo, type_rate = {"careful": (1.15, 60), "responsive": (0.8, 240), "fast": (0.6, 720)}[speed]
             body.config = replace(body.config, type_rate=type_rate)
             body.ctx.config = body.config
             body.controller.config = replace(body.controller.config, tempo=tempo)
             self._state("planning")
+            self.detail = "Refreshing the desktop before planning"
             if hasattr(self.session, "settle"):
                 self.session.settle(2.0)
             agent = Agent(self.session.body, planner, max_rounds=24, max_intents=160, on_event=self._agent_event)
-            report = agent.run(self.goal, cancel=self.cancel)
+            report = agent.run(self.goal, cancel=self.cancel,
+                               context=lambda: self.memory.context(self.substrates.snapshot()))
             if self.cancel.is_set():
                 report.status, report.reason = "interrupted", "cancelled"
             self.last_report = report.to_obj()
+            self.memory.remember(report)
+            self.current_action = ""
+            self.detail = ("Task finished. Session stays active — what next?" if report.ok
+                           else f"Paused: {report.reason or report.status}. Session stays connected")
             self.emit({"event": "report", "data": self.last_report})
             self._pointer = list(self.session.actuator.position().rounded())
             self._state("ready")
             return self.last_report
         raise ValueError("Unsupported operation")
+
+    def _guard_keyboard(self):
+        if self.mode != "live" or not self.controller_windows:
+            return
+        foreground = getattr(self.session.actuator, "foreground_window", None)
+        if foreground is not None and foreground() in self.controller_windows:
+            from .skills import SkillFailure
+            raise SkillFailure("controller_focused", "The copilot has keyboard focus. Name the target field, e.g. fill Notes with hello, or focus the target app first")
 
     def _camera(self):
         from .hand import HandController
@@ -396,6 +459,7 @@ class DesktopBridge:
 
     def _agent_event(self, kind, data):
         if kind == "thinking":
+            self.detail = f"Planning step {data.get('round', 1)}"
             self._state("planning")
         elif kind == "plan":
             self._state("moving" if data.get("intents") else "planning")
@@ -405,14 +469,23 @@ class DesktopBridge:
 
     def _body_event(self, event):
         if event.get("kind") == "intent":
+            self.current_action = event.get("intent", {}).get("action", "")
+            self.detail = f"Executing {self.current_action}"
             self._state("moving")
+        elif event.get("kind") == "waiting":
+            self.detail = event.get("detail") or event.get("reason", "Waiting for a target")
+        elif event.get("kind") in ("locked", "acquired"):
+            self.detail = f"Executing {self.current_action}"
         self.emit({"event": "activity", "data": event})
 
     def snapshot(self):
         with self.lock:
             session, phase, running = self.session, self.phase, self.running
         data = {"phase": phase, "mode": self.mode, "running": running, "goal": self.goal,
-                "connected": session is not None}
+                "connected": session is not None, "detail": self.detail, "action": self.current_action,
+                "contextTurns": len(self.memory.turns), "completedTasks": self.memory.completed,
+                "sessionSeconds": round(time.monotonic() - self.connected_at) if self.connected_at else 0,
+                "substrates": self.substrates.snapshot()}
         if session:
             try:
                 pointer = session.body.controller.pos.rounded() if running and phase != "camera" else self._pointer
@@ -422,7 +495,8 @@ class DesktopBridge:
                             monitors=[list(rect.as_tuple()) for rect in session.world.monitors],
                             observation=observation, ticks=session.body.ticks,
                             perceptionMs=round(session.perception.stats.last_frame_s * 1000, 2),
-                            perceptionErrors=session.perception.stats.errors)
+                            perceptionErrors=session.perception.stats.errors,
+                            motorOverruns=session.body.overruns)
             except Exception:
                 return
         self.emit({"event": "snapshot", "data": data})
@@ -437,6 +511,7 @@ class DesktopBridge:
         self.jobs.put(None)
         self.worker.join(timeout=3)
         self.telemetry.join(timeout=1)
+        self.substrates.stop()
 
 
 def main():

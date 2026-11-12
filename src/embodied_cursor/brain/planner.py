@@ -41,6 +41,9 @@ class Episode:
     surprise: str = ""
     """Why the previous plan was cut short, if it was not a failure."""
 
+    context: str = ""
+    """Bounded session history and cached substrate readings, never a new goal."""
+
 
 class Planner(Protocol):
     def plan(self, episode: Episode) -> Plan: ...

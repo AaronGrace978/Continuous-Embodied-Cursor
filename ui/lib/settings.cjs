@@ -6,7 +6,10 @@ const DEFAULTS = Object.freeze({
   model: "gpt-oss:120b",
   localUrl: "http://127.0.0.1:11434",
   indicator: true,
-  minimizeOnRun: true,
+  minimizeOnRun: false,
+  copilotVersion: 1,
+  substratesEnabled: false,
+  voiceAutoRun: false,
   pythonPath: "",
   speed: "responsive",
   localFirst: true,
@@ -43,7 +46,13 @@ function validate(input, previous = DEFAULTS) {
     !["", "/"].includes(url.pathname)
   )
     throw new Error("Local Ollama must use a loopback URL");
-  for (const field of ["indicator", "minimizeOnRun", "localFirst"]) {
+  for (const field of [
+    "indicator",
+    "minimizeOnRun",
+    "localFirst",
+    "substratesEnabled",
+    "voiceAutoRun",
+  ]) {
     if (input[field] !== undefined) {
       if (typeof input[field] !== "boolean")
         throw new Error(`Invalid ${field}`);
@@ -62,7 +71,13 @@ class SettingsStore {
     this.encrypted = "";
     try {
       const stored = JSON.parse(fs.readFileSync(filename, "utf8"));
-      this.settings = validate(stored);
+      // The old default hid the control room on every task. Opt into that
+      // behavior again explicitly after upgrading to the persistent copilot.
+      this.settings = validate({
+        ...stored,
+        minimizeOnRun:
+          stored.copilotVersion === 1 ? stored.minimizeOnRun : false,
+      });
       if (stored.encryptedKey && this.canEncrypt()) {
         this.key = safeStorage.decryptString(
           Buffer.from(stored.encryptedKey, "base64"),

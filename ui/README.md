@@ -42,8 +42,9 @@ set `CEC_PYTHON` before launching. Supply an executable path, not a shell comman
 
 The native Ollama endpoints are `https://ollama.com/api/tags` and
 `https://ollama.com/api/chat`. A local Ollama installation is unnecessary for
-Cloud. The planner receives your goal, visible accessibility control text, and
-prior action outcomes. It receives no screenshots. Requests can consume your
+Cloud. The planner receives your goal, visible accessibility control text,
+recent tasks and action outcomes, and any enabled substrate readings. It receives
+no screenshots. Requests can consume your
 Ollama Cloud allowance.
 
 Keys are encrypted with Electron's OS-backed `safeStorage` when secure storage
@@ -56,6 +57,25 @@ Cloud endpoint, and redirects are rejected.
 **Local Ollama** supports a loopback endpoint such as `http://127.0.0.1:11434`.
 Cloud credentials are not sent to the local endpoint. **Offline commands** uses
 the existing heuristic planner and makes no model requests.
+
+## Persistent copilot
+
+After connecting, choose **Copilot ↗** for the floating command dock. It stays
+available between tasks and reports what the engine is doing or waiting for.
+Follow-up instructions share bounded session context; **New context** clears it
+without disconnecting. Automatic minimizing is opt-in, including after the
+one-time settings migration. The optional Motion Substrate and ChronoSoul
+connections read cached state from their separately running local services.
+See the [copilot guide](../docs/COPILOT.md) for setup and current limits.
+
+## Local voice
+
+Install `.[voice,windows]` into the selected Python runtime, then choose
+**Settings → Local voice → Prepare local voice** to download the English model.
+**Voice ◉** starts a recording; choose Finish to transcribe locally and review
+its text in the command box. Execution after transcription is an explicit
+setting. Audio is never saved or uploaded. Stop cancels recording and decoding.
+See the [voice setup and limits](../docs/COPILOT.md#local-voice-commands).
 
 ## Responsiveness and autonomous goals
 
@@ -88,7 +108,8 @@ the queue cleared. Queue and history stay in memory for this app session.
 ## Camera and hand control
 
 Connect a desktop or the simulation, then choose **Enable camera**. Camera
-access is requested only at that point, with no microphone access. The first
+access is requested only at that point, with no microphone access. Voice microphone permission is separate and scoped
+to an explicitly started voice recording. The first
 enable in an app session downloads Google's hand-landmarker model from
 `storage.googleapis.com`; internet access to that host is required. The pinned
 MediaPipe JavaScript/WASM runtime is copied locally by `npm ci` and included in
@@ -168,8 +189,9 @@ not unwind within 1.5 seconds causes the app's owned backend process to stop;
 the late model reply cannot execute. Reconnect afterward. Closing the app ends
 its own backend session; an unrelated `cec daemon` is not stopped or reused.
 
-By default the app minimizes before a live task, then refreshes perception so
-the control panel does not cover the target application. This is configurable.
+The app refreshes perception before a live task. Move the control room aside
+or use the compact dock to uncover your target. Minimizing on each task is an
+optional setting and is off by default.
 
 ## Playground and traces
 

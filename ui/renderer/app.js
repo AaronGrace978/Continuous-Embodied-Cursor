@@ -6,7 +6,7 @@ const ACTIVE = new Set(["planning", "moving", "stopping", "camera"]);
 const labels = {
   disconnected: "Disconnected",
   connecting: "Connecting…",
-  ready: "Connected · idle",
+  ready: "Session active · ready",
   planning: "Planning",
   moving: "Cursor active",
   stopping: "Stopping…",
@@ -38,6 +38,42 @@ let pendingGoals = [],
 let cameraRun = 0,
   cameraSessionRequested = false;
 let keyboardVisible = false;
+let voiceMessage = "Voice off · record a command locally";
+const voiceCapture = new LocalVoice.Capture({
+  api,
+  onState: ({ message }) => {
+    voiceMessage = message;
+    render();
+  },
+  onTranscript: (text, token) => {
+    $("goal").value = text;
+    voiceMessage = settings.voiceAutoRun
+      ? "Recognized command submitted."
+      : "Transcript ready. Review it, then Run.";
+    addActivity("Voice transcript", text);
+    render();
+    if (
+      settings.voiceAutoRun &&
+      state.connected &&
+      !ACTIVE.has(state.phase) &&
+      !submitting
+    )
+      void executeGoal(text, { voiceToken: token });
+  },
+});
+async function refreshVoiceStatus() {
+  try {
+    const status = await api.voice("status");
+    $("prepareVoice").disabled = !status.available;
+    $("voiceSetupState").textContent = !status.available
+      ? status.setup
+      : status.prepared
+        ? "Local speech model ready. No audio is sent to a server."
+        : "Runtime ready. Prepare the speech model before recording.";
+  } catch (error) {
+    $("voiceSetupState").textContent = error.message;
+  }
+}
 const airTyper = new AirKeyboard.AirTyper();
 let feedbackAt = 0,
   lastLandmarkAt = 0,
@@ -308,22 +344,50 @@ function render() {
   $("runButton").disabled =
     !state.connected ||
     handActive ||
+    voiceCapture.active ||
+    state.voiceActive ||
     state.phase === "stopping" ||
     !$("goal").value.trim();
   $("runButton").firstChild.textContent =
     submitting || ACTIVE.has(state.phase) ? "Queue task " : "Run task ";
-  $("goal").disabled = handActive;
-  $("keyboardButton").disabled = !state.connected || (active && !handActive);
+  $("goal").disabled = handActive || voiceCapture.active;
+  $("voiceButton").disabled =
+    !state.connected ||
+    (active && !voiceCapture.active) ||
+    (state.voiceActive && !voiceCapture.active);
+  $("voiceButton").textContent =
+    voiceCapture.phase === "recording"
+      ? "Finish voice ■"
+      : voiceCapture.active
+        ? "Cancel voice ×"
+        : "Voice ◉";
+  $("voiceButton").setAttribute("aria-pressed", String(voiceCapture.active));
+  $("voiceStatus").textContent = voiceMessage;
+  $("keyboardButton").disabled =
+    !state.connected ||
+    voiceCapture.active ||
+    state.voiceActive ||
+    (active && !handActive);
   $("keyboardButton").textContent = keyboardVisible
     ? "Hide air keyboard ×"
     : "Air keyboard ↗";
   $("calibrateKeyboard").hidden = !keyboardVisible || !handActive;
-  $("cameraButton").disabled = !state.connected || (!handActive && active);
+  $("cameraButton").disabled =
+    !state.connected ||
+    voiceCapture.active ||
+    state.voiceActive ||
+    (!handActive && active);
   $("cameraButton").textContent = handActive
     ? "Disable camera ■"
     : "Enable camera ↗";
+  $("dockButton").disabled = !state.connected;
+  $("clearContext").disabled =
+    !state.connected || active || voiceCapture.active || state.voiceActive;
+  $("sessionSummary").textContent = state.connected
+    ? `Session stays active · ${state.completedTasks || 0} tasks finished · ${state.contextTurns || 0} remembered`
+    : "No active session";
   $("exportTrace").disabled = !state.connected || active;
-  $("stopDock").hidden = !active;
+  $("stopDock").hidden = !active && !voiceCapture.active;
   $("stopButton").disabled = phase === "stopping";
   $("activeDescription").textContent =
     phase === "planning"
@@ -351,10 +415,10 @@ function render() {
             ? ["STOPPING", "Cancelling input. Returning control."]
             : state.connected
               ? [
-                  "ARMED / IDLE",
+                  "SESSION ACTIVE",
                   state.mode === "simulation"
                     ? "Playground mode. Your mouse stays yours."
-                    : "No input until you run a task.",
+                    : "Ready for your next instruction. Desktop perception stays connected.",
                 ]
               : ["STANDBY", "Connect a desktop. Take the controls."];
   $("sessionTitle").textContent = description[0];
@@ -615,7 +679,21 @@ function receive(message) {
       "Point at the upper-left corner and hold a pinch.";
   }
 
+  if (message.event === "voice-toggle") {
+    void voiceCapture.toggle();
+    return;
+  }
+  if (message.event === "voice-reset") {
+    voiceCapture.cancel(false);
+    return;
+  }
+  if (message.event === "voice-state") {
+    state.voiceActive = message.data.active;
+    render();
+    return;
+  }
   if (message.event === "stop-requested") {
+    voiceCapture.cancel(false);
     cameraRun++;
     queuePaused = true;
     camera.stop();
@@ -638,6 +716,8 @@ function receive(message) {
   }
   if (message.event === "snapshot" || message.event === "phase") {
     state = { ...state, ...message.data };
+    if (message.event === "snapshot" && state.detail)
+      $("companionMessage").textContent = state.detail;
     if (state.phase === "stopping") queuePaused = true;
     if (!state.connected) {
       queuePaused = true;
@@ -671,7 +751,10 @@ function receive(message) {
       );
     } else if (data.kind === "surprise")
       addActivity("Taking another look", data.what);
-    else if (data.kind === "press")
+    else if (data.kind === "waiting") {
+      $("companionMessage").textContent = data.detail || data.reason;
+      addActivity("Waiting for a target", data.detail || data.reason);
+    } else if (data.kind === "press")
       addActivity(
         "Mouse button pressed",
         `At ${data.at?.join(", ") || "target"}`,
@@ -697,7 +780,7 @@ function receive(message) {
     );
     toast(
       report.status === "done"
-        ? "Task complete. Control returned."
+        ? "Task finished. Session stays active."
         : report.reason || report.status,
       report.status === "failed",
     );
@@ -758,14 +841,14 @@ async function run() {
   }
   await executeGoal(goal);
 }
-async function executeGoal(goal) {
+async function executeGoal(goal, options) {
   if (!pendingGoals.length) queuePaused = false;
   submitting = true;
   startedAt = Date.now();
   finishedDuration = null;
   render();
   try {
-    const report = await api.run(goal);
+    const report = await api.run(goal, options);
     if (report?.status !== "done") queuePaused = true;
   } catch (error) {
     queuePaused = true;
@@ -822,9 +905,12 @@ function openSettings() {
   $("localUrl").value = settings.localUrl || "http://127.0.0.1:11434";
   $("pythonPath").value = settings.pythonPath || "";
   $("indicatorPreference").checked = settings.indicator !== false;
-  $("minimizePreference").checked = settings.minimizeOnRun !== false;
+  $("minimizePreference").checked = settings.minimizeOnRun === true;
+  $("substratesPreference").checked = settings.substratesEnabled === true;
   $("speedPreference").value = settings.speed || "responsive";
   $("localFirstPreference").checked = settings.localFirst !== false;
+  $("voiceAutoRunPreference").checked = settings.voiceAutoRun === true;
+  void refreshVoiceStatus();
   $("apiKey").value = "";
   clearingKey = false;
   $("saveStatus").textContent = "";
@@ -845,6 +931,8 @@ async function saveSettings() {
     clearKey: clearingKey,
     indicator: $("indicatorPreference").checked,
     minimizeOnRun: $("minimizePreference").checked,
+    substratesEnabled: $("substratesPreference").checked,
+    voiceAutoRun: $("voiceAutoRunPreference").checked,
     speed: $("speedPreference").value,
     localFirst: $("localFirstPreference").checked,
   });
@@ -891,6 +979,14 @@ if (!api) {
     .then((data) => receive({ event: "keyboard-state", data }))
     .catch((error) => toast(error.message, true));
   $("connectButton").addEventListener("click", connect);
+  $("dockButton").addEventListener(
+    "click",
+    () => void attempt(() => api.dock()),
+  );
+  $("clearContext").addEventListener(
+    "click",
+    () => void attempt(() => api.clearContext()),
+  );
   $("liveMode").addEventListener("click", () => setMode("live"));
   $("simulationMode").addEventListener("click", () => setMode("simulation"));
   $("trySimulation").addEventListener("click", () =>
@@ -903,6 +999,21 @@ if (!api) {
     }),
   );
   $("runButton").addEventListener("click", run);
+  $("voiceButton").addEventListener("click", () => void voiceCapture.toggle());
+  $("prepareVoice").addEventListener("click", async () => {
+    $("prepareVoice").disabled = true;
+    $("voiceSetupState").textContent =
+      "Preparing local speech… first use downloads the model.";
+    try {
+      await api.voice("prepare");
+      await refreshVoiceStatus();
+    } catch (error) {
+      $("voiceSetupState").textContent = error.message;
+    } finally {
+      $("prepareVoice").disabled = false;
+    }
+  });
+  window.addEventListener("beforeunload", () => voiceCapture.cancel());
   $("goal").addEventListener("input", render);
   $("goal").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
